@@ -3,32 +3,31 @@
 import packageMetadata from "../package.json" with { type: "json" };
 
 import { parseArguments } from "./arguments";
-import { CLI_NAME, EXIT_CODES } from "./constants";
+import { executeCommand } from "./commands";
+import { EXIT_CODES } from "./constants";
 import { CliError, safeErrorMessage } from "./errors";
+import { defaultIo, type CliIo } from "./io";
 
 const help = `JeraSoft Brand CLI ${packageMetadata.version}
 
 Uso:
   jerasoft-brand init [--dry-run] [--adapter=auto|generic|codex]
   jerasoft-brand context --profile=apply|audit|assets [--format=markdown|json] [--fresh]
+  jerasoft-brand asset resolve <id> --copy-to=<destino> [--fresh]
   jerasoft-brand audit [--frozen] [--offline]
+  jerasoft-brand sync [--fresh]
+  jerasoft-brand upgrade --major
   jerasoft-brand logout [--purge-cache]
   jerasoft-brand --version
 
 O pacote público transporta somente o protocolo. Contratos, skills e ativos
 continuam protegidos na fonte privada e são resolvidos com autenticação.`;
 
-export interface CliIo {
-  stdout(message: string): void;
-  stderr(message: string): void;
-}
-
-const defaultIo: CliIo = {
-  stdout: console.log,
-  stderr: console.error,
-};
-
-export function runCli(arguments_: string[], io: CliIo = defaultIo): number {
+export async function runCli(
+  arguments_: string[],
+  io: CliIo = defaultIo,
+  execute = executeCommand,
+): Promise<number> {
   try {
     const command = parseArguments(arguments_);
     if (command.kind === "help") {
@@ -40,10 +39,7 @@ export function runCli(arguments_: string[], io: CliIo = defaultIo): number {
       return EXIT_CODES.success;
     }
 
-    throw new CliError(
-      `O comando ${command.kind} está reservado pelo protocolo v1 e será habilitado antes da publicação de ${CLI_NAME}@${packageMetadata.version}.`,
-      EXIT_CODES.usageOrConfiguration,
-    );
+    return await execute(command, io);
   } catch (error) {
     io.stderr(safeErrorMessage(error));
     return error instanceof CliError
@@ -53,5 +49,5 @@ export function runCli(arguments_: string[], io: CliIo = defaultIo): number {
 }
 
 if (import.meta.main) {
-  process.exitCode = runCli(process.argv.slice(2));
+  process.exitCode = await runCli(process.argv.slice(2));
 }

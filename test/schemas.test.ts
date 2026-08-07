@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 
 import {
   distributionManifestSchema,
+  cachedReleaseSchema,
   projectConfigSchema,
+  projectLockSchema,
   type Receipt,
   receiptSchema,
 } from "../src/schemas";
@@ -78,6 +80,60 @@ describe("schemas públicos do protocolo", () => {
     expect(receiptSchema.parse(receipt)).toEqual(receipt);
     expect(() =>
       receiptSchema.parse({ ...receipt, token: "proibido" }),
+    ).toThrow();
+  });
+
+  test("lock e cache aceitam somente proveniência pública", () => {
+    const payload = {
+      id: "asset.logo",
+      kind: "asset" as const,
+      releaseAssetName: "asset--logo--1.0.0.svg",
+      mediaType: "image/svg+xml",
+      bytes: 10,
+      sha256: digest,
+      version: "1.0.0",
+      status: "approved" as const,
+      recommendedFilename: "logo.svg",
+    };
+    expect(
+      projectLockSchema.parse({
+        schemaVersion: 1,
+        protocol: 1,
+        channel: "stable",
+        releaseTag: "brand-kit-v1.0.0",
+        sourceCommit: "b".repeat(40),
+        resolvedAt: "2026-08-07T12:00:00.000Z",
+        versions: {
+          bundle: "1.0.0",
+          contract: "1.0.0",
+          skills: "1.0.0",
+          assets: "1.0.0",
+        },
+        manifestSha256: digest,
+        payloads: [payload],
+      }).payloads,
+    ).toEqual([payload]);
+    expect(() =>
+      cachedReleaseSchema.parse({
+        schemaVersion: 1,
+        etag: '"abc"',
+        checkedAt: "2026-08-07T12:00:00.000Z",
+        manifestSha256: digest,
+        release: {
+          id: 1,
+          tagName: "brand-kit-v1.0.0",
+          targetCommitish: "b".repeat(40),
+          assets: [
+            {
+              id: 2,
+              name: "manifest.json",
+              size: 10,
+              digest: `sha256:${digest}`,
+              browserDownloadUrl: "https://example.com?token=proibido",
+            },
+          ],
+        },
+      }),
     ).toThrow();
   });
 });

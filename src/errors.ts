@@ -12,7 +12,20 @@ export class CliError extends Error {
   }
 }
 
+export function redactSecrets(message: string) {
+  return message
+    .replace(
+      /\b(?:ghu|ghr|ghp|gho|ghs|github_pat)_[A-Za-z0-9_-]+\b/g,
+      "[REDACTED]",
+    )
+    .replace(/\bBearer\s+[A-Za-z0-9._~-]+\b/gi, "Bearer [REDACTED]")
+    .replace(
+      /([?&](?:token|sig|signature|x-amz-signature)=)[^&\s]+/gi,
+      "$1[REDACTED]",
+    );
+}
+
 export function safeErrorMessage(error: unknown) {
-  if (error instanceof CliError) return error.message;
+  if (error instanceof CliError) return redactSecrets(error.message);
   return "Não foi possível concluir a operação solicitada.";
 }

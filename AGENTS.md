@@ -30,10 +30,15 @@ screenshot, catálogo de ativos ou credencial pode ser adicionado aqui.
 
 - Releases usam tags `v<semver>` e devem corresponder à versão do
   `package.json`.
-- Publicação npm ocorre apenas no workflow `publish.yml`, em runner hospedado
-  pelo GitHub, com Trusted Publisher OIDC e environment `npm-production`.
-- Não use token npm persistente.
+- Depois do bootstrap de `1.0.0`, publicação npm ocorre apenas no workflow
+  `publish.yml`, em runner hospedado pelo GitHub, com Trusted Publisher OIDC e
+  environment `npm-production`.
+- A única exceção é a primeira publicação do pacote, porque o npm exige que o
+  pacote exista antes de permitir o cadastro do Trusted Publisher. Ela deve
+  partir de `main`, após todos os gates, com login web local e logout imediato.
+- Não use token npm persistente nem armazene token em GitHub Actions.
 - A versão `1.0.0` só pode ser publicada após `init`, `context`, resolução de
   ativos, cache, autenticação e auditoria offline cumprirem o protocolo v1.
 - Mantenha `private: true` no `package.json` durante a implementação. Remova a
   trava somente no mesmo change set que comprovar todos os critérios de release.
+- Siga `docs/RELEASING.md` para bootstrap, tags e releases subsequentes.

@@ -87,7 +87,67 @@ export const receiptSchema = z
   })
   .strict();
 
+export const projectLockSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    protocol: z.literal(1),
+    channel: z.literal("stable"),
+    releaseTag: z.string().regex(/^brand-kit-v\d+\.\d+\.\d+$/),
+    sourceCommit: z.string().regex(/^[a-f0-9]{40}$/),
+    resolvedAt: z.iso.datetime(),
+    versions: z
+      .object({
+        bundle: semverSchema,
+        contract: semverSchema,
+        skills: semverSchema,
+        assets: semverSchema,
+      })
+      .strict(),
+    manifestSha256: sha256Schema,
+    payloads: z.array(manifestPayloadSchema).min(1),
+  })
+  .strict();
+
+export const cachedReleaseAssetSchema = z
+  .object({
+    id: z.number().int().positive(),
+    name: z.string().regex(/^[a-z0-9][a-z0-9._-]*$/),
+    size: z.number().int().nonnegative(),
+    digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  })
+  .strict();
+
+export const cachedReleaseSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    etag: z.string().min(1).nullable(),
+    checkedAt: z.iso.datetime(),
+    manifestSha256: sha256Schema,
+    release: z
+      .object({
+        id: z.number().int().positive(),
+        tagName: z.string().regex(/^brand-kit-v\d+\.\d+\.\d+$/),
+        targetCommitish: z.string().regex(/^[a-f0-9]{40}$/),
+        assets: z.array(cachedReleaseAssetSchema).min(1),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const storedCredentialSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    accessToken: z.string().min(1),
+    expiresAt: z.iso.datetime(),
+    refreshToken: z.string().min(1),
+    refreshExpiresAt: z.iso.datetime(),
+  })
+  .strict();
+
 export type DistributionManifest = z.infer<typeof distributionManifestSchema>;
+export type CachedRelease = z.infer<typeof cachedReleaseSchema>;
 export type ManifestPayload = z.infer<typeof manifestPayloadSchema>;
 export type ProjectConfig = z.infer<typeof projectConfigSchema>;
+export type ProjectLock = z.infer<typeof projectLockSchema>;
 export type Receipt = z.infer<typeof receiptSchema>;
+export type StoredCredential = z.infer<typeof storedCredentialSchema>;

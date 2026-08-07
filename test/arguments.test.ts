@@ -17,6 +17,28 @@ describe("parser público do CLI", () => {
     });
     expect(
       parseArguments([
+        "asset",
+        "resolve",
+        "logo.jerasoft.symbol.default",
+        "--copy-to=assets/brand/symbol.svg",
+        "--fresh",
+      ]),
+    ).toEqual({
+      kind: "asset",
+      id: "logo.jerasoft.symbol.default",
+      copyTo: "assets/brand/symbol.svg",
+      fresh: true,
+    });
+    expect(parseArguments(["sync", "--fresh"])).toEqual({
+      kind: "sync",
+      fresh: true,
+    });
+    expect(parseArguments(["upgrade", "--major"])).toEqual({
+      kind: "upgrade",
+      major: true,
+    });
+    expect(
+      parseArguments([
         "context",
         "--profile=audit",
         "--format=json",
@@ -37,5 +59,8 @@ describe("parser público do CLI", () => {
     expect(() => parseArguments(["init", "--silencioso"])).toThrow(
       "Opção desconhecida",
     );
+    expect(() =>
+      parseArguments(["asset", "resolve", "logo.jerasoft.symbol.default"]),
+    ).toThrow("--copy-to");
   });
 });

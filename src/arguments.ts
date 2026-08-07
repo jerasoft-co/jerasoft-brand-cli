@@ -9,7 +9,10 @@ export type CliCommand =
   | { kind: "version" }
   | { kind: "init"; dryRun: boolean; adapter: "auto" | "generic" | "codex" }
   | { kind: "context"; profile: Profile; format: OutputFormat; fresh: boolean }
+  | { kind: "asset"; id: string; copyTo: string; fresh: boolean }
   | { kind: "audit"; frozen: boolean; offline: boolean }
+  | { kind: "sync"; fresh: boolean }
+  | { kind: "upgrade"; major: boolean }
   | { kind: "logout"; purgeCache: boolean };
 
 function readOption(arguments_: string[], name: string) {
@@ -104,6 +107,42 @@ export function parseArguments(arguments_: string[]): CliCommand {
       frozen: options.includes("--frozen"),
       offline: options.includes("--offline"),
     };
+  }
+
+  if (command === "asset") {
+    const action = options[0];
+    const id = options[1];
+    const assetOptions = options.slice(2);
+    rejectUnknown(assetOptions, new Set(["--copy-to=", "--fresh"]));
+    const copyTo = readOption(assetOptions, "copy-to");
+    if (action !== "resolve" || !id || id.startsWith("-")) {
+      throw new CliError(
+        "Use asset resolve <id> --copy-to=<destino>.",
+        EXIT_CODES.usageOrConfiguration,
+      );
+    }
+    if (!copyTo) {
+      throw new CliError(
+        "Informe --copy-to=<destino> para materializar o ativo.",
+        EXIT_CODES.usageOrConfiguration,
+      );
+    }
+    return {
+      kind: "asset",
+      id,
+      copyTo,
+      fresh: assetOptions.includes("--fresh"),
+    };
+  }
+
+  if (command === "sync") {
+    rejectUnknown(options, new Set(["--fresh"]));
+    return { kind: "sync", fresh: options.includes("--fresh") };
+  }
+
+  if (command === "upgrade") {
+    rejectUnknown(options, new Set(["--major"]));
+    return { kind: "upgrade", major: options.includes("--major") };
   }
 
   if (command === "logout") {

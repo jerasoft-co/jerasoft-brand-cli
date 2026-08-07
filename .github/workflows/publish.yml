@@ -75,5 +75,25 @@ jobs:
           name: npm-package-${{ github.ref_name }}
           path: .
 
+      - name: Detect bootstrap version
+        id: registry
+        shell: bash
+        run: |
+          package_name="$(node -p 'require("./package.json").name')"
+          package_version="$(node -p 'require("./package.json").version')"
+          if npm view "${package_name}@${package_version}" version --json >/dev/null 2>&1; then
+            echo "already-published=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "already-published=false" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Publish with Trusted Publisher
+        if: steps.registry.outputs.already-published != 'true'
         run: npm publish --access public
+
+      - name: Confirm bootstrap version
+        if: steps.registry.outputs.already-published == 'true'
+        run: |
+          package_name="$(node -p 'require("./package.json").name')"
+          package_version="$(node -p 'require("./package.json").version')"
+          test "$(npm view "${package_name}@${package_version}" version)" = "${package_version}"

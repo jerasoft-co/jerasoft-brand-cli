@@ -6,7 +6,7 @@
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jerasoft-co/jerasoft-brand-cli"
+    "url": "git+https://github.com/jerasoft-co/jerasoft-brand-cli.git"
   },
   "homepage": "https://github.com/jerasoft-co/jerasoft-brand-cli#readme",
   "bugs": {

@@ -12,12 +12,13 @@ const output = execFileSync("npm", ["pack", "--json", "--ignore-scripts"], {
   cwd: repositoryRoot,
   encoding: "utf8",
 });
-const parsed = JSON.parse(output) as PackResult[];
-if (parsed.length !== 1 || !parsed[0]) {
+const parsed = JSON.parse(output) as PackResult[] | Record<string, PackResult>;
+const packs = Array.isArray(parsed) ? parsed : Object.values(parsed);
+if (packs.length !== 1 || !packs[0]) {
   throw new Error("O npm não produziu exatamente um tarball.");
 }
 
-const pack = parsed[0];
+const pack = packs[0];
 const expectedFiles = ["README.md", "dist/cli.js", "package.json"];
 const actualFiles = pack.files.map((file) => file.path).sort();
 if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {

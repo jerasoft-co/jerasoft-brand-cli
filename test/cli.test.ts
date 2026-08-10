@@ -21,7 +21,7 @@ describe("entrada do CLI", () => {
   test("informa a versão pública", async () => {
     const capture = captureIo();
     expect(await runCli(["--version"], capture.io)).toBe(EXIT_CODES.success);
-    expect(capture.stdout).toEqual(["1.0.0"]);
+    expect(capture.stdout).toEqual(["1.1.0"]);
     expect(capture.stderr).toEqual([]);
   });
 
@@ -34,6 +34,39 @@ describe("entrada do CLI", () => {
       }),
     ).toBe(EXIT_CODES.success);
     expect(capture.stderr).toEqual([]);
+  });
+
+  test("executa a opção escolhida pelo menu quando não há argumentos", async () => {
+    const capture = captureIo();
+    expect(
+      await runCli(
+        [],
+        capture.io,
+        (command) => {
+          expect(command).toEqual({ kind: "sync", fresh: false });
+          return Promise.resolve(EXIT_CODES.success);
+        },
+        () => Promise.resolve({ kind: "sync", fresh: false }),
+      ),
+    ).toBe(EXIT_CODES.success);
+    expect(capture.stderr).toEqual([]);
+  });
+
+  test("sair do menu encerra sem executar comandos", async () => {
+    const capture = captureIo();
+    let executed = false;
+    expect(
+      await runCli(
+        [],
+        capture.io,
+        () => {
+          executed = true;
+          return Promise.resolve(EXIT_CODES.success);
+        },
+        () => Promise.resolve(null),
+      ),
+    ).toBe(EXIT_CODES.success);
+    expect(executed).toBe(false);
   });
 
   test("propaga erros seguros dos comandos", async () => {

@@ -5,6 +5,7 @@ export type Profile = "apply" | "audit" | "assets";
 export type OutputFormat = "markdown" | "json";
 
 export type CliCommand =
+  | { kind: "interactive" }
   | { kind: "help" }
   | { kind: "version" }
   | { kind: "init"; dryRun: boolean; adapter: "auto" | "generic" | "codex" }
@@ -47,11 +48,10 @@ function rejectUnknown(arguments_: string[], known: Set<string>) {
 
 export function parseArguments(arguments_: string[]): CliCommand {
   const firstArgument = arguments_[0];
-  if (
-    arguments_.length === 0 ||
-    firstArgument === undefined ||
-    ["help", "--help", "-h"].includes(firstArgument)
-  ) {
+  if (arguments_.length === 0 || firstArgument === undefined) {
+    return { kind: "interactive" };
+  }
+  if (["help", "--help", "-h"].includes(firstArgument)) {
     return { kind: "help" };
   }
   if (["version", "--version", "-v"].includes(firstArgument)) {

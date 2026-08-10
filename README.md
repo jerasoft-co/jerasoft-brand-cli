@@ -7,6 +7,18 @@ corporativo canônico.
 
 ## Uso
 
+Abra o assistente na raiz de qualquer projeto:
+
+```sh
+bunx --bun @jerasoft/brand@latest
+```
+
+O menu usa as setas do teclado e detecta automaticamente se o diretório já
+contém um projeto, quais stacks e gerenciadores estão presentes, se Codex está
+configurado e se a integração JeraSoft já foi inicializada. Em ambientes sem
+TTY, o CLI falha sem bloquear o processo e orienta o uso de `--help`; todos os
+comandos explícitos continuam disponíveis para scripts e CI.
+
 Inicialize uma única vez na raiz de cada projeto:
 
 ```sh
@@ -23,6 +35,23 @@ O comando cria:
 
 O bootstrap fixa `@1`, permitindo atualizações patch e minor compatíveis sem
 migrar silenciosamente para outro major.
+
+### Projetos e AGENTS.md existentes
+
+O CLI não pressupõe um diretório vazio. Ao detectar arquivos existentes, ele
+mostra os sinais encontrados e pede confirmação antes de integrar a marca.
+
+Para `AGENTS.md`, a política é:
+
+- se não existir, cria o arquivo com o bloco JeraSoft;
+- se já existir, preserva literalmente o conteúdo e acrescenta um bloco entre
+  `<!-- jerasoft-brand:start -->` e `<!-- jerasoft-brand:end -->`;
+- se o bloco já existir, atualiza somente o conteúdo entre os marcadores;
+- se os marcadores estiverem incompletos, invertidos ou duplicados, interrompe
+  antes de escrever qualquer arquivo de configuração.
+
+Executar `init` novamente é idempotente e reconcilia somente os arquivos
+gerenciados pelo CLI.
 
 ### Contexto para agentes
 

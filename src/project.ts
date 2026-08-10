@@ -1,3 +1,4 @@
+import { readdir } from "node:fs/promises";
 import path from "node:path";
 
 import packageMetadata from "../package.json" with { type: "json" };
@@ -24,6 +25,18 @@ import { parseSemver } from "./semver";
 
 const managedStart = "<!-- jerasoft-brand:start -->";
 const managedEnd = "<!-- jerasoft-brand:end -->";
+
+export type AgentsFileState =
+  "absent" | "existing" | "managed" | "invalid-managed-block";
+
+export interface ProjectInspection {
+  existingProject: boolean;
+  brandInitialized: boolean;
+  brandLockPresent: boolean;
+  agentsFile: AgentsFileState;
+  codexDetected: boolean;
+  signals: string[];
+}
 
 const genericBootstrap = `${managedStart}
 ## Contrato de marca JeraSoft
@@ -115,6 +128,99 @@ function projectPaths(projectRoot: string) {
   return {
     config: path.join(metadataDirectory, "brand.json"),
     lock: path.join(metadataDirectory, "brand.lock.json"),
+  };
+}
+
+async function inspectAgentsFile(
+  projectRoot: string,
+): Promise<AgentsFileState> {
+  const current = await readRegularFile(path.join(projectRoot, "AGENTS.md"));
+  if (!current) return "absent";
+  return agentsStateFromText(current.toString("utf8"));
+}
+
+function agentsStateFromText(text: string): AgentsFileState {
+  const starts = text.split(managedStart).length - 1;
+  const ends = text.split(managedEnd).length - 1;
+  if (
+    starts !== ends ||
+    starts > 1 ||
+    (starts === 1 && text.indexOf(managedEnd) < text.indexOf(managedStart))
+  ) {
+    return "invalid-managed-block";
+  }
+  return starts === 1 ? "managed" : "existing";
+}
+
+export async function inspectProject(
+  projectRoot: string,
+): Promise<ProjectInspection> {
+  const entries = await readdir(projectRoot);
+  const meaningfulEntries = entries.filter(
+    (entry) => !new Set([".DS_Store", "Thumbs.db"]).has(entry),
+  );
+  const signalCandidates = [
+    {
+      paths: ["next.config.js", "next.config.mjs", "next.config.ts"],
+      label: "Next.js",
+    },
+    {
+      paths: ["vite.config.js", "vite.config.mjs", "vite.config.ts"],
+      label: "Vite",
+    },
+    { paths: ["package.json"], label: "package.json" },
+    { paths: ["bun.lock", "bun.lockb"], label: "Bun" },
+    { paths: ["pnpm-lock.yaml"], label: "pnpm" },
+    { paths: ["package-lock.json"], label: "npm" },
+    { paths: ["yarn.lock"], label: "Yarn" },
+    { paths: ["deno.json", "deno.jsonc"], label: "Deno" },
+    { paths: ["pyproject.toml", "requirements.txt"], label: "Python" },
+    { paths: ["Cargo.toml"], label: "Rust" },
+    { paths: ["go.mod"], label: "Go" },
+    { paths: [".git"], label: "Git" },
+    { paths: ["AGENTS.md"], label: "AGENTS.md" },
+  ] as const;
+  const detected = await Promise.all(
+    signalCandidates.map(async (candidate) => ({
+      label: candidate.label,
+      present: (
+        await Promise.all(
+          candidate.paths.map((entry) =>
+            pathExists(path.join(projectRoot, entry)),
+          ),
+        )
+      ).some(Boolean),
+    })),
+  );
+  const signals = detected
+    .filter((candidate) => candidate.present)
+    .map((candidate) => candidate.label);
+  const [
+    brandInitialized,
+    brandLockPresent,
+    agentsFile,
+    agentsDirectory,
+    codexDirectory,
+  ] = await Promise.all([
+    pathExists(projectPaths(projectRoot).config),
+    pathExists(projectPaths(projectRoot).lock),
+    inspectAgentsFile(projectRoot),
+    pathExists(path.join(projectRoot, ".agents")),
+    pathExists(path.join(projectRoot, ".codex")),
+  ]);
+
+  return {
+    existingProject: meaningfulEntries.length > 0,
+    brandInitialized,
+    brandLockPresent,
+    agentsFile,
+    codexDetected: agentsDirectory || codexDirectory,
+    signals:
+      signals.length > 0
+        ? signals
+        : meaningfulEntries.length > 0
+          ? ["arquivos existentes"]
+          : [],
   };
 }
 
@@ -239,18 +345,18 @@ async function writeManagedAgents(projectRoot: string) {
     return;
   }
   const text = current.toString("utf8");
-  const start = text.indexOf(managedStart);
-  const end = text.indexOf(managedEnd);
-  if (start >= 0 !== end >= 0 || (start >= 0 && end < start)) {
+  if (agentsStateFromText(text) === "invalid-managed-block") {
     throw new CliError(
-      "O bloco gerenciado da marca em AGENTS.md está incompleto.",
+      "O bloco gerenciado da marca em AGENTS.md está incompleto ou duplicado.",
       EXIT_CODES.integrity,
     );
   }
+  const start = text.indexOf(managedStart);
+  const end = text.indexOf(managedEnd);
   const next =
     start >= 0
       ? `${text.slice(0, start)}${genericBootstrap}${text.slice(end + managedEnd.length)}`
-      : `${text.trimEnd()}\n\n${genericBootstrap}\n`;
+      : `${text}${text.endsWith("\n\n") ? "" : text.endsWith("\n") ? "\n" : "\n\n"}${genericBootstrap}\n`;
   await atomicWriteFile(agentsPath, next, 0o644);
 }
 
@@ -269,6 +375,15 @@ export async function initializeProject(
   config: ProjectConfig,
   lock: ProjectLock,
 ) {
+  if (config.agentAdapters.includes("generic")) {
+    const agentsFile = await inspectAgentsFile(projectRoot);
+    if (agentsFile === "invalid-managed-block") {
+      throw new CliError(
+        "O bloco gerenciado da marca em AGENTS.md está incompleto ou duplicado.",
+        EXIT_CODES.integrity,
+      );
+    }
+  }
   await atomicWriteFile(
     projectPaths(projectRoot).config,
     serialize(projectConfigSchema.parse(config)),

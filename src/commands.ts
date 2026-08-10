@@ -12,6 +12,7 @@ import {
   createDefaultConfig,
   detectAdapters,
   initializeProject,
+  inspectProject,
   loadProjectConfig,
   loadProjectLock,
   lockFromResolved,
@@ -134,10 +135,26 @@ async function commandInit(
   io: CliIo,
   runtime: CommandRuntime,
 ) {
+  const inspection = await inspectProject(runtime.projectRoot);
+  if (inspection.agentsFile === "invalid-managed-block") {
+    throw new CliError(
+      "O AGENTS.md contém um bloco JeraSoft incompleto ou duplicado. Corrija os marcadores antes de inicializar.",
+      EXIT_CODES.integrity,
+    );
+  }
   const adapters = await detectAdapters(runtime.projectRoot, command.adapter);
   if (command.dryRun) {
+    const projectType = inspection.existingProject
+      ? "projeto existente"
+      : "diretório novo";
+    const agentsPlan =
+      inspection.agentsFile === "absent"
+        ? "criar AGENTS.md"
+        : inspection.agentsFile === "existing"
+          ? "preservar AGENTS.md e acrescentar o bloco JeraSoft"
+          : "atualizar somente o bloco JeraSoft de AGENTS.md";
     io.stdout(
-      `Inicialização planejada sem escrita: .jerasoft/brand.json, .jerasoft/brand.lock.json, AGENTS.md${adapters.includes("codex") ? " e três skills finas em .agents/skills" : ""}.`,
+      `Inicialização planejada sem escrita para ${projectType}: criar ou atualizar .jerasoft/brand.json e .jerasoft/brand.lock.json; ${agentsPlan}${adapters.includes("codex") ? "; criar ou atualizar três skills finas em .agents/skills" : ""}.`,
     );
     return EXIT_CODES.success;
   }
@@ -153,8 +170,17 @@ async function commandInit(
     config,
     lockFromResolved(resolved, runtime.now()),
   );
+  const action = inspection.brandInitialized
+    ? "Integração reconciliada"
+    : inspection.existingProject
+      ? "Projeto existente integrado"
+      : "Projeto inicializado";
+  const preservation =
+    inspection.agentsFile === "existing"
+      ? " O conteúdo anterior de AGENTS.md foi preservado."
+      : "";
   io.stdout(
-    `Projeto inicializado com ${resolved.manifest.releaseTag} e contrato ${resolved.manifest.versions.contract}.`,
+    `${action} com ${resolved.manifest.releaseTag} e contrato ${resolved.manifest.versions.contract}.${preservation}`,
   );
   return EXIT_CODES.success;
 }
@@ -378,6 +404,7 @@ export async function executeCommand(
           : "Sessão removida; o cache íntegro foi preservado.",
       );
       return EXIT_CODES.success;
+    case "interactive":
     case "help":
     case "version":
       throw new CliError(

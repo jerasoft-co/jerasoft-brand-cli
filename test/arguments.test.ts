@@ -4,8 +4,9 @@ import { parseArguments } from "../src/arguments";
 import { CliError } from "../src/errors";
 
 describe("parser público do CLI", () => {
-  test("mantém help e version sem efeitos colaterais", () => {
-    expect(parseArguments([])).toEqual({ kind: "help" });
+  test("abre o menu sem argumentos e mantém help e version explícitos", () => {
+    expect(parseArguments([])).toEqual({ kind: "interactive" });
+    expect(parseArguments(["--help"])).toEqual({ kind: "help" });
     expect(parseArguments(["--version"])).toEqual({ kind: "version" });
   });
 

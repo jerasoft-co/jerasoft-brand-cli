@@ -2,15 +2,17 @@
 
 import packageMetadata from "../package.json" with { type: "json" };
 
-import { parseArguments } from "./arguments";
+import { parseArguments, type CliCommand } from "./arguments";
 import { executeCommand } from "./commands";
 import { EXIT_CODES } from "./constants";
 import { CliError, safeErrorMessage } from "./errors";
+import { runInteractiveMenu } from "./interactive";
 import { defaultIo, type CliIo } from "./io";
 
 const help = `JeraSoft Brand CLI ${packageMetadata.version}
 
 Uso:
+  jerasoft-brand
   jerasoft-brand init [--dry-run] [--adapter=auto|generic|codex]
   jerasoft-brand context --profile=apply|audit|assets [--format=markdown|json] [--fresh]
   jerasoft-brand asset resolve <id> --copy-to=<destino> [--fresh]
@@ -20,6 +22,8 @@ Uso:
   jerasoft-brand logout [--purge-cache]
   jerasoft-brand --version
 
+Sem argumentos, abre um menu navegável que detecta o projeto atual.
+
 O pacote público transporta somente o protocolo. Contratos, skills e ativos
 continuam protegidos na fonte privada e são resolvidos com autenticação.`;
 
@@ -27,9 +31,15 @@ export async function runCli(
   arguments_: string[],
   io: CliIo = defaultIo,
   execute = executeCommand,
+  interactive: () => Promise<CliCommand | null> = runInteractiveMenu,
 ): Promise<number> {
   try {
-    const command = parseArguments(arguments_);
+    let command = parseArguments(arguments_);
+    if (command.kind === "interactive") {
+      const selected = await interactive();
+      if (!selected) return EXIT_CODES.success;
+      command = selected;
+    }
     if (command.kind === "help") {
       io.stdout(help);
       return EXIT_CODES.success;

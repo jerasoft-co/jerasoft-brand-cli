@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -7,6 +7,7 @@ import type { ResolvedManifest } from "../src/cache";
 import {
   createDefaultConfig,
   initializeProject,
+  inspectProject,
   loadProjectConfig,
   loadProjectLock,
   lockFromResolved,
@@ -111,6 +112,71 @@ describe("bootstrap de projeto", () => {
         "utf8",
       ),
     ).toContain("context --profile=apply");
+  });
+
+  test("detecta projeto existente e preserva literalmente o AGENTS.md", async () => {
+    const root = await temporaryRoot();
+    const original = "# Regras existentes\n\nNão altere esta linha.  \n";
+    await Promise.all([
+      writeFile(path.join(root, "package.json"), "{}\n"),
+      writeFile(path.join(root, "AGENTS.md"), original),
+      mkdir(path.join(root, ".codex")),
+    ]);
+
+    const before = await inspectProject(root);
+    expect(before).toMatchObject({
+      existingProject: true,
+      brandInitialized: false,
+      agentsFile: "existing",
+      codexDetected: true,
+    });
+    expect(before.signals).toContain("package.json");
+    expect(before.signals).toContain("AGENTS.md");
+
+    const config = createDefaultConfig(["generic", "codex"]);
+    const lock = lockFromResolved(resolvedFixture());
+    await initializeProject(root, config, lock);
+    await initializeProject(root, config, lock);
+
+    const agents = await readFile(path.join(root, "AGENTS.md"), "utf8");
+    expect(agents.slice(0, original.length)).toBe(original);
+    expect(agents.match(/jerasoft-brand:start/g)).toHaveLength(1);
+    expect(agents).toContain("Não altere esta linha.  ");
+    expect(await inspectProject(root)).toMatchObject({
+      brandInitialized: true,
+      brandLockPresent: true,
+      agentsFile: "managed",
+    });
+  });
+
+  test("não escreve quando o bloco gerenciado de AGENTS.md está incompleto", async () => {
+    const root = await temporaryRoot();
+    const invalid =
+      "# Regras\n\n<!-- jerasoft-brand:start -->\nbloco interrompido\n";
+    await writeFile(path.join(root, "AGENTS.md"), invalid);
+    const config = createDefaultConfig(["generic"]);
+    const lock = lockFromResolved(resolvedFixture());
+
+    expect((await inspectProject(root)).agentsFile).toBe(
+      "invalid-managed-block",
+    );
+    expect(initializeProject(root, config, lock)).rejects.toThrow(
+      "bloco gerenciado",
+    );
+    expect(await readFile(path.join(root, "AGENTS.md"), "utf8")).toBe(invalid);
+    expect((await inspectProject(root)).brandInitialized).toBe(false);
+  });
+
+  test("reconhece um diretório realmente vazio", async () => {
+    const root = await temporaryRoot();
+    expect(await inspectProject(root)).toEqual({
+      existingProject: false,
+      brandInitialized: false,
+      brandLockPresent: false,
+      agentsFile: "absent",
+      codexDetected: false,
+      signals: [],
+    });
   });
 
   test("materializa somente dentro do diretório configurado e não sobrescreve drift", async () => {

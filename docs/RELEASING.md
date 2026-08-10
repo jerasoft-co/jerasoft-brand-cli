@@ -27,11 +27,19 @@ Trusted Publisher. Essa exceção não se repete.
 ## Releases seguintes
 
 1. Atualize `version` no `package.json` e o `bun.lock` no mesmo commit.
-2. Execute `bun run check`.
-3. Faça merge em `main`.
-4. Crie a tag correspondente, por exemplo `v1.0.1` ou `v1.1.0`, e envie-a.
-5. O workflow valida a correspondência entre tag e versão e publica pelo
-   Trusted Publisher OIDC no environment `npm-production`.
+2. Faça commit diretamente em `main` e mantenha a árvore de trabalho limpa.
+3. Confira o plano sem publicar com `bun run release --dry-run`.
+4. Execute `bun run release`.
+
+O comando lê a versão do `package.json`, valida o estado de `main`, consulta o
+npm e as tags existentes, executa `bun ci` e `bun run check`, envia a `main`
+quando ela estiver somente à frente do remoto, cria a tag correspondente e
+acompanha o `publish.yml` até a versão aparecer no registry. Releases
+interrompidos depois do envio da tag podem executar o mesmo comando novamente
+para retomar o acompanhamento.
+
+O workflow valida novamente a correspondência entre tag e versão e publica pelo
+Trusted Publisher OIDC no environment `npm-production`.
 
 Nunca reutilize uma versão npm, force uma tag publicada ou adicione `NPM_TOKEN`
 ao repositório.

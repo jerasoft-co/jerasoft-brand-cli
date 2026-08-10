@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import packageMetadata from "../package.json" with { type: "json" };
+
 import { runCli } from "../src/cli";
 import { EXIT_CODES } from "../src/constants";
 import { CliError } from "../src/errors";
@@ -21,7 +23,7 @@ describe("entrada do CLI", () => {
   test("informa a versão pública", async () => {
     const capture = captureIo();
     expect(await runCli(["--version"], capture.io)).toBe(EXIT_CODES.success);
-    expect(capture.stdout).toEqual(["1.1.0"]);
+    expect(capture.stdout).toEqual([packageMetadata.version]);
     expect(capture.stderr).toEqual([]);
   });
 

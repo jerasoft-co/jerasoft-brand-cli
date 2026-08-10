@@ -1,34 +1,20 @@
 import { execFileSync } from "node:child_process";
-import { readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
-interface PackResult {
-  filename: string;
-  files: { path: string }[];
-}
-
 const repositoryRoot = process.cwd();
-const output = execFileSync("npm", ["pack", "--json", "--ignore-scripts"], {
-  cwd: repositoryRoot,
-  encoding: "utf8",
-});
-const parsed = JSON.parse(output) as PackResult[] | Record<string, PackResult>;
-const packs = Array.isArray(parsed) ? parsed : Object.values(parsed);
-if (packs.length !== 1 || !packs[0]) {
-  throw new Error("O npm não produziu exatamente um tarball.");
-}
-
-const pack = packs[0];
 const expectedFiles = ["README.md", "dist/cli.js", "package.json"];
-const actualFiles = pack.files.map((file) => file.path).sort();
-if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
-  throw new Error(
-    `O tarball contém uma lista inesperada de arquivos: ${actualFiles.join(", ")}.`,
-  );
-}
-
-const archivePath = path.join(repositoryRoot, pack.filename);
+const packDirectory = await mkdtemp(
+  path.join(tmpdir(), "jerasoft-pack-check-"),
+);
+const archivePath = path.join(packDirectory, "package.tgz");
 try {
+  execFileSync(
+    process.execPath,
+    ["pm", "pack", "--filename", archivePath, "--ignore-scripts", "--quiet"],
+    { cwd: repositoryRoot, encoding: "utf8" },
+  );
   const archiveEntries = execFileSync("tar", ["-tzf", archivePath], {
     cwd: repositoryRoot,
     encoding: "utf8",
@@ -62,7 +48,7 @@ try {
     }
   }
 } finally {
-  await rm(archivePath, { force: true });
+  await rm(packDirectory, { recursive: true, force: true });
 }
 
 console.info("Tarball público validado com 3 arquivos permitidos.");

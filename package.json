@@ -1,6 +1,6 @@
 {
   "name": "@jerasoft/brand",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "CLI público para distribuição autenticada e verificável da marca JeraSoft.",
   "type": "module",
   "license": "UNLICENSED",
@@ -29,13 +29,16 @@
   },
   "scripts": {
     "build": "bun run tooling/build.ts",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "lint": "eslint . --max-warnings=0",
+    "dev": "bun run tooling/dev.ts",
+    "dev:watch": "bun --watch tooling/dev.ts",
+    "format": "bun --bun prettier --write .",
+    "format:check": "bun --bun prettier --check .",
+    "lint": "bun --bun eslint . --max-warnings=0",
     "pack:check": "bun run build && bun run tooling/pack-check.ts",
     "release": "bun run tooling/release.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit",
+    "test:watch": "bun test --watch",
+    "typecheck": "bun --bun tsc --noEmit",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run pack:check"
   },
   "dependencies": {

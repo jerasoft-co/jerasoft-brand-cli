@@ -19,6 +19,11 @@ configurado e se a integração JeraSoft já foi inicializada. Em ambientes sem
 TTY, o CLI falha sem bloquear o processo e orienta o uso de `--help`; todos os
 comandos explícitos continuam disponíveis para scripts e CI.
 
+“Ver todos os comandos” abre um catálogo navegável dentro do próprio menu.
+Comandos que dependem da inicialização ou do lock continuam visíveis com a
+orientação necessária, mas ficam indisponíveis até o pré-requisito ser atendido.
+É possível executar uma opção, consultar a versão ou voltar sem encerrar a CLI.
+
 Inicialize uma única vez na raiz de cada projeto:
 
 ```sh
@@ -121,8 +126,27 @@ bunx --bun @jerasoft/brand@1 logout --purge-cache
 
 ```sh
 bun ci
+bun run dev -- --help
+bun run dev
+bun run dev:watch -- init --dry-run
+bun run test:watch
 bun run check
 ```
+
+`dev` executa diretamente o TypeScript, sem build nem publicação, usando por
+padrão a pasta temporária do sistema em `jerasoft-brand-dev`. O diretório é
+persistente entre execuções para permitir testar fluxos como `init`, `context`,
+`sync` e `audit` em sequência. Para apontar a CLI a outro projeto de teste fora
+deste repositório, use `--dev-root=/caminho/absoluto` ou a variável
+`JERASOFT_BRAND_DEV_ROOT`:
+
+```sh
+bun run dev -- --dev-root=/tmp/minha-app init --dry-run
+```
+
+`dev:watch` reinicia a execução quando o código muda. Antes de qualquer deploy,
+`bun run check` continua sendo o gate completo de formatação, lint, tipos,
+testes, build e inspeção do tarball.
 
 O tarball é limitado a `README.md`, `package.json` e `dist/cli.js`. Não existem
 hooks de instalação, client secrets, chaves privadas ou conteúdo de marca no

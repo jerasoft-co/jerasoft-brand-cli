@@ -51,13 +51,13 @@ describe("schemas públicos do protocolo", () => {
     ).toThrow();
     expect(() =>
       projectConfigSchema.parse({
-        schemaVersion: 1,
+        schemaVersion: 2,
         protocol: 1,
         channel: "stable",
         cliRange: "^1.0.0",
         contractRange: "^1.0.0",
         updatePolicy: "compatible",
-        agentAdapters: ["generic"],
+        agentArtifacts: ["instructions", "skills"],
         assetDirectory: "../private",
         token: "proibido",
       }),

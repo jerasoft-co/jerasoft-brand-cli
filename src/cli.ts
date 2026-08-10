@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
 import packageMetadata from "../package.json" with { type: "json" };
 
@@ -13,7 +13,9 @@ const help = `JeraSoft Brand CLI ${packageMetadata.version}
 
 Uso:
   jerasoft-brand
-  jerasoft-brand init [--dry-run] [--adapter=auto|generic|codex]
+  jerasoft-brand init [--dry-run] [--appearance=light|dark|adaptive]
+    [--token-adapters=css,delphi-vcl,delphi-fmx]
+    [--token-output=.jerasoft/generated]
   jerasoft-brand context --profile=apply|audit|assets [--format=markdown|json] [--fresh]
   jerasoft-brand asset resolve <id> --copy-to=<destino> [--fresh]
   jerasoft-brand audit [--frozen] [--offline]

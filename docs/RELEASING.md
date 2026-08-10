@@ -26,10 +26,20 @@ Trusted Publisher. Essa exceção não se repete.
 
 ## Releases seguintes
 
-1. Atualize `version` no `package.json` e o `bun.lock` no mesmo commit.
-2. Faça commit diretamente em `main` e mantenha a árvore de trabalho limpa.
-3. Confira o plano sem publicar com `bun run release --dry-run`.
-4. Execute `bun run release`.
+1. Abra o menu navegável com `bun run version:bump` e escolha o incremento.
+   Para automação, use
+   `bun run version:bump -- <build|minor|major> [--dry-run]`.
+2. Confirme a alteração apresentada pelo menu. Com parâmetros, o incremento é
+   aplicado diretamente; use `--dry-run` para apenas conferir o número.
+3. Execute `bun run check` e revise as alterações em `package.json` e `bun.lock`.
+4. Faça commit diretamente em `main` e mantenha a árvore de trabalho limpa.
+5. Confira o plano sem publicar com `bun run release --dry-run`.
+6. Execute `bun run release`.
+
+`build` incrementa o patch SemVer (`1.2.0` → `1.2.1`), `minor` gera
+`1.3.0` e `major` gera `2.0.0`. O bump não cria commit, tag nem publicação. A
+sincronização do lock usa `--ignore-scripts`; se falhar, os dois arquivos são
+restaurados.
 
 O comando lê a versão do `package.json`, valida o estado de `main`, consulta o
 npm e as tags existentes, executa `bun ci` e `bun run check`, envia a `main`

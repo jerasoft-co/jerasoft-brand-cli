@@ -78,32 +78,39 @@ function inspection(
     brandInitialized: false,
     brandLockPresent: false,
     agentsFile: "existing",
-    codexDetected: true,
+    agentSkills: { state: "managed", installed: 3, total: 3 },
     signals: ["Next.js", "Git", "AGENTS.md"],
     ...overrides,
   };
 }
 
-function run(prompter: ScriptedPrompter, project: ProjectInspection) {
+function run(
+  prompter: ScriptedPrompter,
+  project: ProjectInspection,
+  colors = false,
+) {
   return runInteractiveMenu({
     projectRoot: "/workspace/existente",
     prompter,
     terminal: { interactive: true },
+    colors,
     inspect: () => Promise.resolve(project),
   });
 }
 
 describe("menu interativo", () => {
   test("detecta projeto existente e confirma integração preservando arquivos", async () => {
-    const prompter = new ScriptedPrompter(["init", "auto"], [], [true]);
+    const prompter = new ScriptedPrompter(["init"], [], [true]);
     expect(await run(prompter, inspection())).toEqual({
       kind: "init",
       dryRun: false,
-      adapter: "auto",
     });
-    expect(prompter.messages.join("\n")).toContain("Projeto existente");
+    expect(prompter.messages.join("\n")).toContain("✓ Projeto      Existente");
     expect(prompter.messages.join("\n")).toContain(
-      "conteúdo existente será preservado",
+      "! AGENTS.md    Existente · o conteúdo será preservado",
+    );
+    expect(prompter.messages.join("\n")).toContain(
+      "✓ Agent Skills 3 skills JeraSoft integradas",
     );
   });
 
@@ -212,8 +219,8 @@ describe("menu interativo", () => {
     expect(prompter.messages).toContain("outro:Até logo.");
   });
 
-  test("oferece voltar durante a configuração sem tratar como cancelamento", async () => {
-    const prompter = new ScriptedPrompter(["init", "back", "exit"]);
+  test("volta ao menu ao recusar a integração sem tratar como cancelamento", async () => {
+    const prompter = new ScriptedPrompter(["init", "exit"], [], [false]);
     expect(await run(prompter, inspection())).toBeNull();
     expect(prompter.messages).toContain(
       "note:De volta ao menu:Ação não confirmada.",
@@ -271,6 +278,50 @@ describe("menu interativo", () => {
       prompter.menus[0]?.options.find((option) => option.value === "init"),
     ).toMatchObject({ disabled: true });
     expect(prompter.menus[0]?.initialValue).toBe("help");
+    expect(prompter.messages.join("\n")).toContain(
+      "× AGENTS.md    Bloqueado · corrija os marcadores JeraSoft",
+    );
+  });
+
+  test("sinaliza conflito em Agent Skills antes da inicialização", async () => {
+    const prompter = new ScriptedPrompter(["exit"]);
+    expect(
+      await run(
+        prompter,
+        inspection({
+          agentSkills: { state: "conflict", installed: 0, total: 3 },
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      prompter.menus[0]?.options.find((option) => option.value === "init"),
+    ).toMatchObject({
+      hint: "resolva primeiro o conflito em Agent Skills",
+      disabled: true,
+    });
+    expect(prompter.messages.join("\n")).toContain(
+      "× Agent Skills Conflito · uma skill existente não é gerenciada",
+    );
+  });
+
+  test("colore semanticamente os estados do projeto", async () => {
+    const prompter = new ScriptedPrompter(["exit"]);
+    expect(
+      await run(
+        prompter,
+        inspection({
+          brandInitialized: true,
+          brandLockPresent: true,
+          agentsFile: "managed",
+          agentSkills: { state: "absent", installed: 0, total: 3 },
+        }),
+        true,
+      ),
+    ).toBeNull();
+    const output = prompter.messages.join("\n");
+    expect(output).toContain("\u001B[32m✓\u001B[39m");
+    expect(output).toContain("\u001B[33m!\u001B[39m");
+    expect(output).toContain("Configurada · lock presente");
   });
 
   test("coleta ID e destino ao materializar um ativo", async () => {

@@ -3,15 +3,22 @@ import path from "node:path";
 
 import packageMetadata from "../package.json" with { type: "json" };
 
-import { DEFAULT_ASSET_DIRECTORY, EXIT_CODES } from "./constants";
+import {
+  DEFAULT_ASSET_DIRECTORY,
+  DEFAULT_TOKEN_DIRECTORY,
+  EXIT_CODES,
+} from "./constants";
 import { CliError } from "./errors";
 import type { ResolvedManifest } from "./cache";
 import {
+  readableProjectConfigSchema,
   projectConfigSchema,
   projectLockSchema,
+  type AgentArtifact,
   type ManifestPayload,
   type ProjectConfig,
   type ProjectLock,
+  type TokenAdapter,
 } from "./schemas";
 import {
   assertSafeParentChain,
@@ -25,16 +32,25 @@ import { parseSemver } from "./semver";
 
 const managedStart = "<!-- jerasoft-brand:start -->";
 const managedEnd = "<!-- jerasoft-brand:end -->";
+const managedSkillMarker = "<!-- jerasoft-brand:managed-skill -->";
 
 export type AgentsFileState =
   "absent" | "existing" | "managed" | "invalid-managed-block";
+
+export type AgentSkillsState = "absent" | "partial" | "managed" | "conflict";
+
+export interface AgentSkillsInspection {
+  state: AgentSkillsState;
+  installed: number;
+  total: number;
+}
 
 export interface ProjectInspection {
   existingProject: boolean;
   brandInitialized: boolean;
   brandLockPresent: boolean;
   agentsFile: AgentsFileState;
-  codexDetected: boolean;
+  agentSkills: AgentSkillsInspection;
   signals: string[];
 }
 
@@ -45,7 +61,7 @@ Antes de criar, alterar ou auditar interfaces e materiais JeraSoft, execute o
 perfil correspondente e trate a saída como contrato vigente:
 
 \`\`\`sh
-bunx --bun @jerasoft/brand@1 context --profile=apply --format=markdown
+npx @jerasoft/brand@1 context --profile=apply --format=markdown
 \`\`\`
 
 Use \`--profile=audit\` para auditoria e \`--profile=assets\` para localizar
@@ -67,12 +83,14 @@ name: jerasoft-apply-brand
 description: Resolve e aplica o contrato vigente da marca JeraSoft às ferramentas já disponíveis no projeto.
 ---
 
+${managedSkillMarker}
+
 # Aplicar marca JeraSoft
 
 Antes de agir, execute:
 
 \`\`\`sh
-bunx --bun @jerasoft/brand@1 context --profile=apply --format=markdown
+npx @jerasoft/brand@1 context --profile=apply --format=markdown
 \`\`\`
 
 Leia integralmente a saída, siga o contrato resolvido e use somente ativos
@@ -86,12 +104,14 @@ name: jerasoft-audit-interface
 description: Resolve o contrato vigente e orienta auditorias verificáveis de interfaces e materiais JeraSoft.
 ---
 
+${managedSkillMarker}
+
 # Auditar interface JeraSoft
 
 Antes da auditoria, execute:
 
 \`\`\`sh
-bunx --bun @jerasoft/brand@1 context --profile=audit --format=markdown
+npx @jerasoft/brand@1 context --profile=audit --format=markdown
 \`\`\`
 
 Leia integralmente a saída e mantenha a auditoria sem alterações, salvo quando
@@ -105,12 +125,14 @@ name: jerasoft-resolve-assets
 description: Resolve logos e outros ativos oficiais JeraSoft por identificador e digest verificável.
 ---
 
+${managedSkillMarker}
+
 # Resolver ativos JeraSoft
 
 Antes de escolher mídia, execute:
 
 \`\`\`sh
-bunx --bun @jerasoft/brand@1 context --profile=assets --format=markdown
+npx @jerasoft/brand@1 context --profile=assets --format=markdown
 \`\`\`
 
 Depois materialize somente IDs retornados pelo contexto com
@@ -118,6 +140,90 @@ Depois materialize somente IDs retornados pelo contexto com
 `,
   },
 ];
+
+export const DEFAULT_AGENT_ARTIFACTS: AgentArtifact[] = [
+  "instructions",
+  "skills",
+];
+
+const tokenPayloadByAdapter: Record<TokenAdapter | "dtcg", string> = {
+  dtcg: "contract.jerasoft-tokens",
+  css: "contract.jerasoft-tokens-css",
+  "delphi-vcl": "contract.jerasoft-tokens-vcl",
+  "delphi-fmx": "contract.jerasoft-tokens-fmx",
+};
+
+export function configuredTokenPayloadIds(config: ProjectConfig) {
+  if (!config.tokens.enabled) return [];
+  return [
+    tokenPayloadByAdapter.dtcg,
+    ...config.tokens.adapters.map((adapter) => tokenPayloadByAdapter[adapter]),
+  ];
+}
+
+function skillPath(projectRoot: string, skill: BootstrapSkill) {
+  return path.join(
+    projectRoot,
+    ".agents",
+    "skills",
+    skill.directory,
+    "SKILL.md",
+  );
+}
+
+function unmarkedSkillContents(skill: BootstrapSkill) {
+  return skill.contents.replace(`${managedSkillMarker}\n\n`, "");
+}
+
+function isManagedSkill(contents: string, skill: BootstrapSkill) {
+  if (contents.includes(managedSkillMarker)) return true;
+  const unmarked = unmarkedSkillContents(skill);
+  const bunLegacy = unmarked.replaceAll(
+    "npx @jerasoft/brand@1",
+    "bunx --bun @jerasoft/brand@1",
+  );
+  return contents === unmarked || contents === bunLegacy;
+}
+
+async function readAgentSkill(projectRoot: string, skill: BootstrapSkill) {
+  const target = skillPath(projectRoot, skill);
+  await assertSafeParentChain(projectRoot, target);
+  return readRegularFile(target);
+}
+
+async function inspectAgentSkills(
+  projectRoot: string,
+): Promise<AgentSkillsInspection> {
+  let installed = 0;
+  let conflicts = 0;
+  for (const skill of bootstrapSkills) {
+    const current = await readAgentSkill(projectRoot, skill);
+    if (!current) continue;
+    if (isManagedSkill(current.toString("utf8"), skill)) installed += 1;
+    else conflicts += 1;
+  }
+  const state: AgentSkillsState =
+    conflicts > 0
+      ? "conflict"
+      : installed === 0
+        ? "absent"
+        : installed === bootstrapSkills.length
+          ? "managed"
+          : "partial";
+  return { state, installed, total: bootstrapSkills.length };
+}
+
+async function assertWritableAgentSkills(projectRoot: string) {
+  for (const skill of bootstrapSkills) {
+    const current = await readAgentSkill(projectRoot, skill);
+    if (current && !isManagedSkill(current.toString("utf8"), skill)) {
+      throw new CliError(
+        `A Agent Skill ${skill.directory} já existe e não é gerenciada pela JeraSoft. Preserve ou renomeie o arquivo antes de inicializar.`,
+        EXIT_CODES.integrity,
+      );
+    }
+  }
+}
 
 function serialize(value: unknown) {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -192,29 +298,37 @@ export async function inspectProject(
       ).some(Boolean),
     })),
   );
-  const signals = detected
+  const signals: string[] = detected
     .filter((candidate) => candidate.present)
     .map((candidate) => candidate.label);
-  const [
-    brandInitialized,
-    brandLockPresent,
-    agentsFile,
-    agentsDirectory,
-    codexDirectory,
-  ] = await Promise.all([
-    pathExists(projectPaths(projectRoot).config),
-    pathExists(projectPaths(projectRoot).lock),
-    inspectAgentsFile(projectRoot),
-    pathExists(path.join(projectRoot, ".agents")),
-    pathExists(path.join(projectRoot, ".codex")),
-  ]);
+  const delphiProjects = meaningfulEntries.filter((entry) =>
+    entry.toLowerCase().endsWith(".dproj"),
+  );
+  if (delphiProjects.length > 0) {
+    const projectFiles = await Promise.all(
+      delphiProjects.map((entry) =>
+        readRegularFile(path.join(projectRoot, entry)),
+      ),
+    );
+    const usesFmx = projectFiles.some((contents) =>
+      contents?.toString("utf8").includes("<FrameworkType>FMX</FrameworkType>"),
+    );
+    signals.push(usesFmx ? "Delphi FMX" : "Delphi VCL");
+  }
+  const [brandInitialized, brandLockPresent, agentsFile, agentSkills] =
+    await Promise.all([
+      pathExists(projectPaths(projectRoot).config),
+      pathExists(projectPaths(projectRoot).lock),
+      inspectAgentsFile(projectRoot),
+      inspectAgentSkills(projectRoot),
+    ]);
 
   return {
     existingProject: meaningfulEntries.length > 0,
     brandInitialized,
     brandLockPresent,
     agentsFile,
-    codexDetected: agentsDirectory || codexDirectory,
+    agentSkills,
     signals:
       signals.length > 0
         ? signals
@@ -247,7 +361,44 @@ export async function loadProjectConfig(projectRoot: string) {
     );
   }
   try {
-    return projectConfigSchema.parse(raw);
+    const config = readableProjectConfigSchema.parse(raw);
+    if (config.schemaVersion === 3) return config;
+    if (config.schemaVersion === 2) {
+      return projectConfigSchema.parse({
+        ...config,
+        schemaVersion: 3,
+        cliRange: `^${packageMetadata.version}`,
+        appearance: { default: "light", experiences: {} },
+        tokens: {
+          enabled: true,
+          outputDirectory: DEFAULT_TOKEN_DIRECTORY,
+          adapters: [],
+        },
+      });
+    }
+    const agentArtifacts: AgentArtifact[] = [];
+    if (config.agentAdapters.includes("generic")) {
+      agentArtifacts.push("instructions");
+    }
+    if (config.agentAdapters.includes("codex")) {
+      agentArtifacts.push("skills");
+    }
+    return projectConfigSchema.parse({
+      schemaVersion: 3,
+      protocol: config.protocol,
+      channel: config.channel,
+      cliRange: `^${packageMetadata.version}`,
+      contractRange: config.contractRange,
+      updatePolicy: config.updatePolicy,
+      agentArtifacts,
+      assetDirectory: config.assetDirectory,
+      appearance: { default: "light", experiences: {} },
+      tokens: {
+        enabled: true,
+        outputDirectory: DEFAULT_TOKEN_DIRECTORY,
+        adapters: [],
+      },
+    });
   } catch (error) {
     throw new CliError(
       "A configuração .jerasoft/brand.json é inválida.",
@@ -277,33 +428,24 @@ export async function loadProjectLock(projectRoot: string) {
 }
 
 export function createDefaultConfig(
-  adapters: ProjectConfig["agentAdapters"],
+  agentArtifacts: AgentArtifact[] = DEFAULT_AGENT_ARTIFACTS,
 ): ProjectConfig {
   return projectConfigSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 3,
     protocol: 1,
     channel: "stable",
     cliRange: `^${packageMetadata.version}`,
-    contractRange: "^1.0.0",
+    contractRange: "^1.1.0",
     updatePolicy: "compatible",
-    agentAdapters: adapters,
+    agentArtifacts,
     assetDirectory: DEFAULT_ASSET_DIRECTORY,
+    appearance: { default: "light", experiences: {} },
+    tokens: {
+      enabled: true,
+      outputDirectory: DEFAULT_TOKEN_DIRECTORY,
+      adapters: [],
+    },
   });
-}
-
-export async function detectAdapters(
-  projectRoot: string,
-  adapter: "auto" | "generic" | "codex",
-): Promise<ProjectConfig["agentAdapters"]> {
-  if (adapter === "generic") return ["generic"];
-  if (adapter === "codex") return ["generic", "codex"];
-  const codexSignals = [".agents", ".codex"];
-  const codex = (
-    await Promise.all(
-      codexSignals.map((entry) => pathExists(path.join(projectRoot, entry))),
-    )
-  ).some(Boolean);
-  return codex ? ["generic", "codex"] : ["generic"];
 }
 
 export function assertCompatible(
@@ -360,13 +502,9 @@ async function writeManagedAgents(projectRoot: string) {
   await atomicWriteFile(agentsPath, next, 0o644);
 }
 
-async function writeCodexSkills(projectRoot: string) {
+async function writeAgentSkills(projectRoot: string) {
   for (const skill of bootstrapSkills) {
-    await atomicWriteFile(
-      path.join(projectRoot, ".agents", "skills", skill.directory, "SKILL.md"),
-      skill.contents,
-      0o644,
-    );
+    await atomicWriteFile(skillPath(projectRoot, skill), skill.contents, 0o644);
   }
 }
 
@@ -375,7 +513,7 @@ export async function initializeProject(
   config: ProjectConfig,
   lock: ProjectLock,
 ) {
-  if (config.agentAdapters.includes("generic")) {
+  if (config.agentArtifacts.includes("instructions")) {
     const agentsFile = await inspectAgentsFile(projectRoot);
     if (agentsFile === "invalid-managed-block") {
       throw new CliError(
@@ -384,17 +522,20 @@ export async function initializeProject(
       );
     }
   }
+  if (config.agentArtifacts.includes("skills")) {
+    await assertWritableAgentSkills(projectRoot);
+  }
   await atomicWriteFile(
     projectPaths(projectRoot).config,
     serialize(projectConfigSchema.parse(config)),
     0o644,
   );
   await writeProjectLock(projectRoot, lock);
-  if (config.agentAdapters.includes("generic")) {
+  if (config.agentArtifacts.includes("instructions")) {
     await writeManagedAgents(projectRoot);
   }
-  if (config.agentAdapters.includes("codex")) {
-    await writeCodexSkills(projectRoot);
+  if (config.agentArtifacts.includes("skills")) {
+    await writeAgentSkills(projectRoot);
   }
 }
 
@@ -450,6 +591,90 @@ export async function materializeAsset(
   }
   await atomicWriteFile(destination, contents, 0o644);
   return { destination, changed: true };
+}
+
+export async function materializeTokenPayload(
+  projectRoot: string,
+  config: ProjectConfig,
+  payload: ManifestPayload,
+  contents: Uint8Array,
+  previousPayload?: ManifestPayload,
+) {
+  if (!payload.recommendedFilename) {
+    throw new CliError(
+      `O payload ${payload.id} não declara nome de arquivo recomendado.`,
+      EXIT_CODES.integrity,
+    );
+  }
+  const tokenRoot = resolveInside(projectRoot, config.tokens.outputDirectory);
+  const destination = resolveInside(tokenRoot, payload.recommendedFilename);
+  await assertSafeParentChain(projectRoot, destination);
+  const existing = await readRegularFile(destination);
+  if (existing) {
+    const existingDigest = sha256(existing);
+    if (existingDigest === payload.sha256) {
+      return { destination, changed: false };
+    }
+    if (previousPayload?.sha256 !== existingDigest) {
+      throw new CliError(
+        `O arquivo gerenciado divergiu manualmente: ${path.relative(projectRoot, destination)}.`,
+        EXIT_CODES.drift,
+      );
+    }
+  }
+  await atomicWriteFile(destination, contents, 0o644);
+  return { destination, changed: true };
+}
+
+export async function auditTokenPayload(
+  projectRoot: string,
+  config: ProjectConfig,
+  payload: ManifestPayload,
+) {
+  if (!payload.recommendedFilename) return false;
+  const tokenRoot = resolveInside(projectRoot, config.tokens.outputDirectory);
+  const destination = resolveInside(tokenRoot, payload.recommendedFilename);
+  await assertSafeParentChain(projectRoot, destination);
+  const existing = await readRegularFile(destination);
+  if (!existing || sha256(existing) !== payload.sha256) return false;
+  const text = existing.toString("utf8");
+  if (payload.id === tokenPayloadByAdapter.dtcg) {
+    try {
+      const document = JSON.parse(text) as Record<string, unknown>;
+      const extensions = document.$extensions as
+        Record<string, Record<string, unknown>> | undefined;
+      const contract = extensions?.["com.jerasoft.contract"];
+      const color = document.color as Record<string, unknown> | undefined;
+      return Boolean(
+        contract?.dtcgFormat === "2025.10" &&
+        Array.isArray(contract.contrastPairs) &&
+        contract.contrastPairs.length > 0 &&
+        color?.palette &&
+        color.light &&
+        color.dark,
+      );
+    } catch {
+      return false;
+    }
+  }
+  if (payload.id === tokenPayloadByAdapter.css) {
+    return (
+      text.includes('data-jera-appearance="light"') &&
+      text.includes('data-jera-appearance="dark"') &&
+      text.includes("@supports (color: oklch(0 0 0))")
+    );
+  }
+  if (payload.id === tokenPayloadByAdapter["delphi-vcl"]) {
+    return (
+      text.includes("TJeraVclColor") &&
+      text.includes("Alpha: Byte") &&
+      text.includes("OpaqueFallback: TColor")
+    );
+  }
+  if (payload.id === tokenPayloadByAdapter["delphi-fmx"]) {
+    return text.includes("TAlphaColor") && text.includes("$FF");
+  }
+  return true;
 }
 
 export function lockMatchesManifest(

@@ -10,14 +10,24 @@ corporativo canônico.
 Abra o assistente na raiz de qualquer projeto:
 
 ```sh
+npx @jerasoft/brand@latest
+```
+
+Ou, se você já usa Bun:
+
+```sh
 bunx --bun @jerasoft/brand@latest
 ```
 
+O pacote publicado requer Node.js 22 ou superior quando executado com `npx`.
+Bun continua suportado como alternativa de execução e como toolchain de
+desenvolvimento do repositório.
+
 O menu usa as setas do teclado e detecta automaticamente se o diretório já
-contém um projeto, quais stacks e gerenciadores estão presentes, se Codex está
-configurado e se a integração JeraSoft já foi inicializada. Em ambientes sem
-TTY, o CLI falha sem bloquear o processo e orienta o uso de `--help`; todos os
-comandos explícitos continuam disponíveis para scripts e CI.
+contém um projeto, quais stacks e gerenciadores estão presentes, o estado dos
+artefatos abertos para agentes e se a integração JeraSoft já foi inicializada.
+Em ambientes sem TTY, o CLI falha sem bloquear o processo e orienta o uso de
+`--help`; todos os comandos explícitos continuam disponíveis para scripts e CI.
 
 “Ver todos os comandos” abre um catálogo navegável dentro do próprio menu.
 Comandos que dependem da inicialização ou do lock continuam visíveis com a
@@ -27,16 +37,30 @@ orientação necessária, mas ficam indisponíveis até o pré-requisito ser ate
 Inicialize uma única vez na raiz de cada projeto:
 
 ```sh
-bunx --bun @jerasoft/brand@latest init
+npx @jerasoft/brand@latest init
+```
+
+O perfil e os adapters podem ser definidos na própria inicialização:
+
+```sh
+npx @jerasoft/brand@latest init \
+  --appearance=adaptive \
+  --token-adapters=css \
+  --token-output=.jerasoft/generated
 ```
 
 O comando cria:
 
 - `.jerasoft/brand.json`, com a política versionada do projeto;
 - `.jerasoft/brand.lock.json`, com a resolução e os digests aprovados;
+- o manifesto DTCG e os adapters configurados, por padrão em
+  `.jerasoft/generated`;
 - um bloco gerenciado em `AGENTS.md`;
-- três skills finas em `.agents/skills`, quando o adapter Codex for detectado
-  ou solicitado.
+- três Agent Skills finas e portáveis em `.agents/skills`.
+
+A integração não detecta nem persiste fornecedores de IA. `AGENTS.md` e
+`SKILL.md` são tratados como formatos abertos; trocar a ferramenta ou o modelo
+usado no projeto não exige reinicializar a marca.
 
 O bootstrap fixa `@1`, permitindo atualizações patch e minor compatíveis sem
 migrar silenciosamente para outro major.
@@ -58,12 +82,24 @@ Para `AGENTS.md`, a política é:
 Executar `init` novamente é idempotente e reconcilia somente os arquivos
 gerenciados pelo CLI.
 
+### Aparência e tokens
+
+O schema v3 de `.jerasoft/brand.json` declara `appearance.default` como
+`light`, `dark` ou `adaptive`, além de perfis opcionais por experiência. O
+manifesto DTCG sempre é materializado quando tokens estão habilitados. Os
+adapters opcionais são `css`, `delphi-vcl` e `delphi-fmx`.
+
+Configurações schema v1 e v2 são lidas como `light`. `context` e `audit` não as
+reescrevem; `init` e `sync` migram para v3. Arquivos gerenciados só são
+atualizados quando ainda correspondem ao digest anterior. Divergência manual
+interrompe a operação.
+
 ### Contexto para agentes
 
 ```sh
-bunx --bun @jerasoft/brand@1 context --profile=apply --format=markdown
-bunx --bun @jerasoft/brand@1 context --profile=audit --format=json
-bunx --bun @jerasoft/brand@1 context --profile=assets --fresh
+npx @jerasoft/brand@1 context --profile=apply --format=markdown
+npx @jerasoft/brand@1 context --profile=audit --format=json
+npx @jerasoft/brand@1 context --profile=assets --fresh
 ```
 
 Os perfis retornam o contrato vigente e o procedimento privado correspondente.
@@ -75,7 +111,7 @@ O destino precisa ficar dentro de `assetDirectory`, configurado por padrão como
 `assets/brand`:
 
 ```sh
-bunx --bun @jerasoft/brand@1 asset resolve \
+npx @jerasoft/brand@1 asset resolve \
   logo.jerasoft.symbol.default \
   --copy-to=assets/brand/jerasoft-symbol.svg
 ```
@@ -86,14 +122,15 @@ simbólicos.
 ### Sincronização, auditoria e migração
 
 ```sh
-bunx --bun @jerasoft/brand@1 sync
-bunx --bun @jerasoft/brand@1 audit --frozen
-bunx --bun @jerasoft/brand@1 audit --frozen --offline
-bunx --bun @jerasoft/brand@1 upgrade --major
+npx @jerasoft/brand@1 sync
+npx @jerasoft/brand@1 audit --frozen
+npx @jerasoft/brand@1 audit --frozen --offline
+npx @jerasoft/brand@1 upgrade --major
 ```
 
-`context` nunca modifica o lock. Somente `init`, `sync`, `upgrade` e a resolução
-de um ativo registram uma nova resolução no projeto.
+`context` e `audit` nunca modificam o projeto. `init` e `sync` reconciliam a
+configuração, o lock e os tokens; `upgrade` e a resolução de ativo também podem
+registrar uma nova resolução.
 
 ## Autenticação
 
@@ -107,8 +144,8 @@ Tokens de acesso expiram e são renovados pelo refresh token sem client secret.
 Nenhum token é salvo no projeto, no cache, no receipt ou no pacote npm.
 
 ```sh
-bunx --bun @jerasoft/brand@1 logout
-bunx --bun @jerasoft/brand@1 logout --purge-cache
+npx @jerasoft/brand@1 logout
+npx @jerasoft/brand@1 logout --purge-cache
 ```
 
 ## Cache e integridade
@@ -130,8 +167,13 @@ bun run dev -- --help
 bun run dev
 bun run dev:watch -- init --dry-run
 bun run test:watch
+bun run version:bump
 bun run check
 ```
+
+`version:bump` abre um menu navegável com as próximas versões build, minor e
+major. Em scripts e CI, use
+`bun run version:bump -- <build|minor|major> [--dry-run]`.
 
 `dev` executa diretamente o TypeScript, sem build nem publicação, usando por
 padrão a pasta temporária do sistema em `jerasoft-brand-dev`. O diretório é

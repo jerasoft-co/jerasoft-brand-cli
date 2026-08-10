@@ -11,10 +11,23 @@ describe("parser público do CLI", () => {
   });
 
   test("interpreta init e context com opções explícitas", () => {
-    expect(parseArguments(["init", "--dry-run", "--adapter=codex"])).toEqual({
+    expect(parseArguments(["init", "--dry-run"])).toEqual({
       kind: "init",
       dryRun: true,
-      adapter: "codex",
+    });
+    expect(
+      parseArguments([
+        "init",
+        "--appearance=adaptive",
+        "--token-adapters=css,delphi-fmx",
+        "--token-output=design/tokens",
+      ]),
+    ).toEqual({
+      kind: "init",
+      dryRun: false,
+      appearance: "adaptive",
+      tokenAdapters: ["css", "delphi-fmx"],
+      tokenOutput: "design/tokens",
     });
     expect(
       parseArguments([
@@ -53,6 +66,19 @@ describe("parser público do CLI", () => {
     });
   });
 
+  test("traduz --adapter legado sem levar fornecedor ao domínio", () => {
+    expect(parseArguments(["init", "--adapter=generic"])).toEqual({
+      kind: "init",
+      dryRun: false,
+      artifacts: ["instructions"],
+    });
+    expect(parseArguments(["init", "--adapter=codex"])).toEqual({
+      kind: "init",
+      dryRun: false,
+      artifacts: ["instructions", "skills"],
+    });
+  });
+
   test("rejeita perfis e opções desconhecidas em pt-BR", () => {
     expect(() => parseArguments(["context", "--profile=outro"])).toThrow(
       CliError,
@@ -60,6 +86,9 @@ describe("parser público do CLI", () => {
     expect(() => parseArguments(["init", "--silencioso"])).toThrow(
       "Opção desconhecida",
     );
+    expect(() =>
+      parseArguments(["init", "--token-adapters=css,desconhecido"]),
+    ).toThrow("delphi-fmx");
     expect(() =>
       parseArguments(["asset", "resolve", "logo.jerasoft.symbol.default"]),
     ).toThrow("--copy-to");

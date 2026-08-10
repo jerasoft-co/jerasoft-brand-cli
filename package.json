@@ -1,6 +1,6 @@
 {
   "name": "@jerasoft/brand",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "CLI público para distribuição autenticada e verificável da marca JeraSoft.",
   "type": "module",
   "license": "UNLICENSED",
@@ -20,7 +20,7 @@
     "README.md"
   ],
   "engines": {
-    "bun": ">=1.3.6"
+    "node": ">=22"
   },
   "packageManager": "bun@1.3.6",
   "publishConfig": {
@@ -39,10 +39,12 @@
     "test": "bun test",
     "test:watch": "bun test --watch",
     "typecheck": "bun --bun tsc --noEmit",
+    "version:bump": "bun run tooling/version-bump.ts",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run pack:check"
   },
   "dependencies": {
     "@clack/prompts": "1.7.0",
+    "@napi-rs/keyring": "1.3.0",
     "zod": "4.4.3"
   },
   "devDependencies": {

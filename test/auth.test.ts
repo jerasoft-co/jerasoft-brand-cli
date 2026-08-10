@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { GitHubAuthenticator, type CredentialStore } from "../src/auth";
+import {
+  GitHubAuthenticator,
+  SystemCredentialStore,
+  type CredentialStore,
+} from "../src/auth";
 import type { StoredCredential } from "../src/schemas";
 
 class MemoryCredentialStore implements CredentialStore {
@@ -20,6 +24,26 @@ class MemoryCredentialStore implements CredentialStore {
     this.credential = null;
     this.deletions += 1;
     return Promise.resolve();
+  }
+}
+
+class MemoryKeyringEntry {
+  password: string | undefined;
+  deletions = 0;
+
+  getPassword() {
+    return Promise.resolve(this.password);
+  }
+
+  setPassword(password: string) {
+    this.password = password;
+    return Promise.resolve();
+  }
+
+  deleteCredential() {
+    this.password = undefined;
+    this.deletions += 1;
+    return Promise.resolve(true);
   }
 }
 
@@ -44,6 +68,36 @@ function jsonResponse(value: unknown) {
 }
 
 describe("autenticação GitHub", () => {
+  test("serializa a sessão somente no keyring nativo", async () => {
+    const entry = new MemoryKeyringEntry();
+    const store = new SystemCredentialStore(entry);
+    const credential: StoredCredential = {
+      schemaVersion: 1,
+      accessToken: "ghu_acesso",
+      expiresAt: "2026-08-11T12:00:00.000Z",
+      refreshToken: "ghr_refresh",
+      refreshExpiresAt: "2027-01-01T00:00:00.000Z",
+    };
+
+    await store.set(credential);
+    expect(JSON.parse(entry.password ?? "") as unknown).toEqual(credential);
+    expect(await store.get()).toEqual(credential);
+
+    await store.delete();
+    expect(entry.password).toBeUndefined();
+    expect(entry.deletions).toBe(1);
+  });
+
+  test("descarta uma sessão inválida encontrada no keyring", async () => {
+    const entry = new MemoryKeyringEntry();
+    entry.password = '{"token":"inválido"}';
+    const store = new SystemCredentialStore(entry);
+
+    expect(await store.get()).toBeNull();
+    expect(entry.password).toBeUndefined();
+    expect(entry.deletions).toBe(1);
+  });
+
   test("prioriza GH_TOKEN sem persistir ou exibir o valor", async () => {
     const store = new MemoryCredentialStore();
     const capture = silentIo();

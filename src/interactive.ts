@@ -80,36 +80,157 @@ interface InteractiveOptions {
   prompter?: InteractivePrompter;
   terminal?: TerminalState;
   inspect?: (projectRoot: string) => Promise<ProjectInspection>;
+  colors?: boolean;
 }
 
 type InteractiveResult = CliCommand | "back" | "cancel";
 
-function agentsDescription(inspection: ProjectInspection) {
+type StatusTone = "info" | "success" | "warning" | "danger" | "muted";
+
+const toneCodes: Record<StatusTone, [open: string, close: string]> = {
+  info: ["\u001B[36m", "\u001B[39m"],
+  success: ["\u001B[32m", "\u001B[39m"],
+  warning: ["\u001B[33m", "\u001B[39m"],
+  danger: ["\u001B[31m", "\u001B[39m"],
+  muted: ["\u001B[2m", "\u001B[22m"],
+};
+
+function paint(value: string, tone: StatusTone, colors: boolean) {
+  if (!colors) return value;
+  const [open, close] = toneCodes[tone];
+  return `${open}${value}${close}`;
+}
+
+function statusLine(
+  symbol: string,
+  tone: StatusTone,
+  label: string,
+  value: string,
+  colors: boolean,
+) {
+  const paddedLabel = label.padEnd(12);
+  return `${paint(symbol, tone, colors)} ${paint(paddedLabel, "info", colors)} ${paint(value, tone, colors)}`;
+}
+
+function colorsSupported() {
+  if (process.env.NO_COLOR !== undefined || process.env.FORCE_COLOR === "0") {
+    return false;
+  }
+  return process.env.FORCE_COLOR !== undefined || process.env.TERM !== "dumb";
+}
+
+function agentsStatus(inspection: ProjectInspection) {
   switch (inspection.agentsFile) {
     case "absent":
-      return "será criado com um bloco gerenciado JeraSoft";
+      return {
+        symbol: "!",
+        tone: "warning" as const,
+        value: "Ausente · o arquivo será criado",
+      };
     case "existing":
-      return "conteúdo existente será preservado; o bloco JeraSoft será acrescentado";
+      return {
+        symbol: "!",
+        tone: "warning" as const,
+        value: "Existente · o conteúdo será preservado",
+      };
     case "managed":
-      return "somente o bloco JeraSoft existente será atualizado";
+      return {
+        symbol: "✓",
+        tone: "success" as const,
+        value: "Integrado · somente o bloco gerenciado será atualizado",
+      };
     case "invalid-managed-block":
-      return "possui marcadores JeraSoft incompletos e precisa ser corrigido";
+      return {
+        symbol: "×",
+        tone: "danger" as const,
+        value: "Bloqueado · corrija os marcadores JeraSoft",
+      };
   }
 }
 
-function projectSummary(projectRoot: string, inspection: ProjectInspection) {
-  const type = inspection.existingProject
-    ? `Projeto existente${inspection.signals.length > 0 ? ` (${inspection.signals.join(", ")})` : ""}`
-    : "Diretório novo";
-  const brand = inspection.brandInitialized
-    ? `configurada${inspection.brandLockPresent ? " e com lock" : ", sem lock"}`
-    : "ainda não configurada";
+function agentSkillsStatus(inspection: ProjectInspection) {
+  const { state, installed, total } = inspection.agentSkills;
+  switch (state) {
+    case "absent":
+      return {
+        symbol: "!",
+        tone: "warning" as const,
+        value: `Ausentes · ${String(total)} skills serão criadas`,
+      };
+    case "partial":
+      return {
+        symbol: "!",
+        tone: "warning" as const,
+        value: `Parciais · ${String(installed)}/${String(total)} instaladas`,
+      };
+    case "managed":
+      return {
+        symbol: "✓",
+        tone: "success" as const,
+        value: `${String(total)} skills JeraSoft integradas`,
+      };
+    case "conflict":
+      return {
+        symbol: "×",
+        tone: "danger" as const,
+        value: "Conflito · uma skill existente não é gerenciada",
+      };
+  }
+}
+
+function integrationBlockHint(inspection: ProjectInspection) {
+  if (inspection.agentsFile === "invalid-managed-block") {
+    return "corrija primeiro os marcadores de AGENTS.md";
+  }
+  if (inspection.agentSkills.state === "conflict") {
+    return "resolva primeiro o conflito em Agent Skills";
+  }
+  return undefined;
+}
+
+function integrationBlocked(inspection: ProjectInspection) {
+  return integrationBlockHint(inspection) !== undefined;
+}
+
+function projectSummary(
+  projectRoot: string,
+  inspection: ProjectInspection,
+  colors: boolean,
+) {
+  const project = inspection.existingProject
+    ? {
+        symbol: "✓",
+        tone: "success" as const,
+        value: `Existente${inspection.signals.length > 0 ? ` · ${inspection.signals.join(", ")}` : ""}`,
+      }
+    : { symbol: "○", tone: "info" as const, value: "Diretório novo" };
+  const brand = !inspection.brandInitialized
+    ? { symbol: "!", tone: "warning" as const, value: "Não configurada" }
+    : inspection.brandLockPresent
+      ? {
+          symbol: "✓",
+          tone: "success" as const,
+          value: "Configurada · lock presente",
+        }
+      : {
+          symbol: "!",
+          tone: "warning" as const,
+          value: "Configurada · lock ausente",
+        };
+  const agents = agentsStatus(inspection);
+  const agentSkills = agentSkillsStatus(inspection);
   return [
-    `Diretório: ${projectRoot}`,
-    `Detecção: ${type}`,
-    `Marca: ${brand}`,
-    `AGENTS.md: ${agentsDescription(inspection)}`,
-    `Codex: ${inspection.codexDetected ? "detectado" : "não detectado"}`,
+    statusLine("›", "info", "Diretório", projectRoot, colors),
+    statusLine(project.symbol, project.tone, "Projeto", project.value, colors),
+    statusLine(brand.symbol, brand.tone, "Marca", brand.value, colors),
+    statusLine(agents.symbol, agents.tone, "AGENTS.md", agents.value, colors),
+    statusLine(
+      agentSkills.symbol,
+      agentSkills.tone,
+      "Agent Skills",
+      agentSkills.value,
+      colors,
+    ),
   ].join("\n");
 }
 
@@ -117,53 +238,41 @@ async function chooseInit(
   inspection: ProjectInspection,
   prompter: InteractivePrompter,
 ): Promise<InteractiveResult> {
-  if (inspection.agentsFile === "invalid-managed-block") {
+  if (integrationBlocked(inspection)) {
     throw new CliError(
-      "O AGENTS.md contém um bloco JeraSoft incompleto. Corrija os marcadores antes de inicializar.",
+      inspection.agentsFile === "invalid-managed-block"
+        ? "O AGENTS.md contém um bloco JeraSoft incompleto. Corrija os marcadores antes de inicializar."
+        : "Uma Agent Skill JeraSoft existente não é gerenciada pelo CLI. Preserve ou renomeie o arquivo antes de inicializar.",
       EXIT_CODES.integrity,
     );
   }
 
-  let adapter: "auto" | "generic" | "codex" = "auto";
-  if (!inspection.brandInitialized) {
-    const selected = await prompter.select(
-      "Como os agentes devem receber o contrato?",
-      [
-        {
-          value: "auto",
-          label: "Detectar automaticamente",
-          hint: inspection.codexDetected ? "Codex detectado" : "recomendado",
-        },
-        {
-          value: "generic",
-          label: "Somente AGENTS.md",
-          hint: "compatível com qualquer agente",
-        },
-        {
-          value: "codex",
-          label: "AGENTS.md + skills do Codex",
-          hint: "cria skills finas locais",
-        },
-        { value: "back", label: "Voltar ao menu principal" },
-      ],
-      "auto",
-    );
-    if (!selected) return "cancel";
-    if (selected === "back") return "back";
-    adapter = selected as typeof adapter;
-  }
-
   if (inspection.existingProject) {
+    const detectedAdapters = [
+      ...(inspection.signals.some((signal) =>
+        new Set(["Next.js", "Vite"]).has(signal),
+      )
+        ? ["CSS"]
+        : []),
+      ...(inspection.signals.includes("Delphi VCL") ? ["Delphi VCL"] : []),
+      ...(inspection.signals.includes("Delphi FMX")
+        ? ["Delphi FireMonkey"]
+        : []),
+    ];
+    const adapterNotice =
+      detectedAdapters.length > 0
+        ? ` Os adapters detectados (${detectedAdapters.join(", ")}) serão materializados; use as opções explícitas de init para alterar a seleção.`
+        : "";
     const confirmed = await prompter.confirm(
       inspection.brandInitialized
-        ? "Reconciliar a integração sem alterar o restante do projeto?"
-        : "Integrar a marca preservando os arquivos existentes?",
+        ? `Reconciliar a integração sem alterar o restante do projeto?${adapterNotice}`
+        : `Integrar a marca preservando os arquivos existentes?${adapterNotice}`,
       true,
     );
     if (confirmed === null) return "cancel";
     if (!confirmed) return "back";
   }
-  return { kind: "init", dryRun: false, adapter };
+  return { kind: "init", dryRun: false };
 }
 
 async function chooseAsset(
@@ -265,7 +374,7 @@ function commandCatalog(inspection: ProjectInspection): PromptOption[] {
         ? "Reconciliar integração do projeto"
         : "Inicializar a marca neste projeto",
       hint: "init",
-      disabled: inspection.agentsFile === "invalid-managed-block",
+      disabled: integrationBlocked(inspection),
     },
     {
       value: "context-apply",
@@ -323,7 +432,7 @@ async function chooseFromCommandCatalog(
 ): Promise<InteractiveResult> {
   let initialValue = inspection.brandInitialized
     ? "context-apply"
-    : inspection.agentsFile === "invalid-managed-block"
+    : integrationBlocked(inspection)
       ? "back"
       : "init";
   for (;;) {
@@ -357,11 +466,8 @@ function mainMenuOptions(inspection: ProjectInspection): PromptOption[] {
         label: inspection.existingProject
           ? "Integrar a marca a este projeto"
           : "Inicializar a marca neste diretório",
-        hint:
-          inspection.agentsFile === "invalid-managed-block"
-            ? "corrija primeiro os marcadores de AGENTS.md"
-            : "recomendado",
-        disabled: inspection.agentsFile === "invalid-managed-block",
+        hint: integrationBlockHint(inspection) ?? "recomendado",
+        disabled: integrationBlocked(inspection),
       },
       { value: "help", label: "Ver todos os comandos" },
       { value: "logout", label: "Encerrar sessão local" },
@@ -397,11 +503,8 @@ function mainMenuOptions(inspection: ProjectInspection): PromptOption[] {
     {
       value: "init",
       label: "Reconciliar integração do projeto",
-      hint:
-        inspection.agentsFile === "invalid-managed-block"
-          ? "corrija primeiro os marcadores de AGENTS.md"
-          : "preserva conteúdo existente",
-      disabled: inspection.agentsFile === "invalid-managed-block",
+      hint: integrationBlockHint(inspection) ?? "preserva conteúdo existente",
+      disabled: integrationBlocked(inspection),
     },
     { value: "upgrade", label: "Migrar contrato major" },
     { value: "logout", label: "Encerrar sessão local" },
@@ -424,14 +527,18 @@ export async function runInteractiveMenu(
   const projectRoot = options.projectRoot ?? process.cwd();
   const prompter = options.prompter ?? defaultPrompter;
   const inspection = await (options.inspect ?? inspectProject)(projectRoot);
+  const colors = options.colors ?? colorsSupported();
   prompter.intro(`JeraSoft Brand CLI ${packageMetadata.version}`);
-  prompter.note(projectSummary(projectRoot, inspection), "Projeto detectado");
+  prompter.note(
+    projectSummary(projectRoot, inspection, colors),
+    "Projeto detectado",
+  );
 
   let initialValue = inspection.brandInitialized
     ? inspection.brandLockPresent
       ? "context-apply"
       : "sync"
-    : inspection.agentsFile === "invalid-managed-block"
+    : integrationBlocked(inspection)
       ? "help"
       : "init";
   for (;;) {

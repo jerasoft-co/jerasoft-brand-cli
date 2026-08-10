@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+
 import { z } from "zod";
 
 import {
@@ -49,12 +51,31 @@ export interface CredentialStore {
   delete(): Promise<void>;
 }
 
+interface KeyringEntry {
+  getPassword(): Promise<string | undefined>;
+  setPassword(password: string): Promise<void>;
+  deleteCredential(): Promise<boolean>;
+}
+
+async function createSystemKeyringEntry(): Promise<KeyringEntry> {
+  const { AsyncEntry } = await import("@napi-rs/keyring");
+  return new AsyncEntry(CREDENTIAL_SERVICE, CREDENTIAL_NAME);
+}
+
 export class SystemCredentialStore implements CredentialStore {
+  private entryPromise: Promise<KeyringEntry> | undefined;
+
+  constructor(private readonly injectedEntry?: KeyringEntry) {}
+
+  private resolveEntry() {
+    if (this.injectedEntry) return Promise.resolve(this.injectedEntry);
+    this.entryPromise ??= createSystemKeyringEntry();
+    return this.entryPromise;
+  }
+
   async get() {
-    const serialized = await Bun.secrets.get({
-      service: CREDENTIAL_SERVICE,
-      name: CREDENTIAL_NAME,
-    });
+    const entry = await this.resolveEntry();
+    const serialized = await entry.getPassword();
     if (!serialized) return null;
     try {
       return storedCredentialSchema.parse(JSON.parse(serialized) as unknown);
@@ -65,18 +86,15 @@ export class SystemCredentialStore implements CredentialStore {
   }
 
   async set(credential: StoredCredential) {
-    await Bun.secrets.set({
-      service: CREDENTIAL_SERVICE,
-      name: CREDENTIAL_NAME,
-      value: JSON.stringify(storedCredentialSchema.parse(credential)),
-    });
+    const entry = await this.resolveEntry();
+    await entry.setPassword(
+      JSON.stringify(storedCredentialSchema.parse(credential)),
+    );
   }
 
   async delete() {
-    await Bun.secrets.delete({
-      service: CREDENTIAL_SERVICE,
-      name: CREDENTIAL_NAME,
-    });
+    const entry = await this.resolveEntry();
+    await entry.deleteCredential();
   }
 }
 
@@ -112,7 +130,15 @@ function defaultOpenBrowser(url: string) {
         ? ["cmd", "/c", "start", "", url]
         : ["xdg-open", url];
   try {
-    Bun.spawn(command, { stderr: "ignore", stdout: "ignore" }).unref();
+    const [executable, ...arguments_] = command;
+    if (!executable) return;
+    const child = spawn(executable, arguments_, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.once("error", () => undefined);
+    child.unref();
   } catch {
     // A URL e o código já foram exibidos; abrir o navegador é conveniência.
   }

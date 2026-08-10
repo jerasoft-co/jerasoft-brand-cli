@@ -32,6 +32,15 @@ try {
       readFile(path.join(repositoryRoot, file), "utf8"),
     ),
   );
+  const executable = publicContents[1];
+  if (!executable?.startsWith("#!/usr/bin/env node\n")) {
+    throw new Error("O executável público não possui o shebang do Node.js.");
+  }
+  if (/\bBun\.(?:secrets|spawn)\b/.test(executable)) {
+    throw new Error(
+      "O executável público ainda depende de APIs runtime do Bun.",
+    );
+  }
   const forbiddenPatterns = [
     /github_pat_[A-Za-z0-9_]+/,
     /gh[pousr]_[A-Za-z0-9]+/,

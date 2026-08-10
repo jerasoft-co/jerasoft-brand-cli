@@ -43,6 +43,15 @@ function protocolFixture() {
       contents: "# Contrato aprovado\n",
     },
     {
+      id: "contract.jerasoft-tokens",
+      kind: "contract",
+      name: "contract--jerasoft-tokens--1.0.0.json",
+      mediaType: "application/design-tokens+json",
+      contents:
+        '{"$extensions":{"com.jerasoft.contract":{"dtcgFormat":"2025.10","contrastPairs":[{}]}},"color":{"palette":{},"light":{},"dark":{}}}\n',
+      recommendedFilename: "jerasoft.tokens.json",
+    },
+    {
       id: "skill.jerasoft-apply-brand",
       kind: "skill",
       name: "skill--jerasoft-apply-brand--1.0.0.md",
@@ -199,7 +208,7 @@ describe("fluxo público do CLI", () => {
 
     expect(
       await executeCommand(
-        { kind: "init", dryRun: false, adapter: "generic" },
+        { kind: "init", dryRun: false },
         capture.io,
         runtime,
       ),
@@ -217,6 +226,12 @@ describe("fluxo público do CLI", () => {
       ),
     ).toBe(EXIT_CODES.success);
     expect(capture.stdout.at(-1)).toContain("Contrato aprovado");
+    expect(
+      await readFile(
+        path.join(projectRoot, ".jerasoft/generated/jerasoft.tokens.json"),
+        "utf8",
+      ),
+    ).toContain('"dtcgFormat":"2025.10"');
 
     expect(
       await executeCommand(

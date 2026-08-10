@@ -9,8 +9,9 @@ const result = await Bun.build({
   entrypoints: [path.join(repositoryRoot, "src/cli.ts")],
   outdir: outputDirectory,
   naming: "cli.js",
-  target: "bun",
+  target: "node",
   format: "esm",
+  external: ["@napi-rs/keyring"],
   minify: false,
   sourcemap: "none",
 });

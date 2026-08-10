@@ -1,5 +1,6 @@
 import { CliError } from "./errors";
 import { EXIT_CODES } from "./constants";
+import type { AgentArtifact, AppearanceProfile, TokenAdapter } from "./schemas";
 
 export type Profile = "apply" | "audit" | "assets";
 export type OutputFormat = "markdown" | "json";
@@ -8,7 +9,14 @@ export type CliCommand =
   | { kind: "interactive" }
   | { kind: "help" }
   | { kind: "version" }
-  | { kind: "init"; dryRun: boolean; adapter: "auto" | "generic" | "codex" }
+  | {
+      kind: "init";
+      dryRun: boolean;
+      artifacts?: AgentArtifact[];
+      appearance?: AppearanceProfile;
+      tokenAdapters?: TokenAdapter[];
+      tokenOutput?: string;
+    }
   | { kind: "context"; profile: Profile; format: OutputFormat; fresh: boolean }
   | { kind: "asset"; id: string; copyTo: string; fresh: boolean }
   | { kind: "audit"; frozen: boolean; offline: boolean }
@@ -61,18 +69,70 @@ export function parseArguments(arguments_: string[]): CliCommand {
   const command = firstArgument;
   const options = arguments_.slice(1);
   if (command === "init") {
-    rejectUnknown(options, new Set(["--dry-run", "--adapter="]));
-    const adapter = readOption(options, "adapter") ?? "auto";
-    if (!new Set(["auto", "generic", "codex"]).has(adapter)) {
+    rejectUnknown(
+      options,
+      new Set([
+        "--dry-run",
+        "--adapter=",
+        "--appearance=",
+        "--token-adapters=",
+        "--token-output=",
+      ]),
+    );
+    const legacyAdapter = readOption(options, "adapter");
+    if (
+      legacyAdapter !== undefined &&
+      !new Set(["auto", "generic", "codex"]).has(legacyAdapter)
+    ) {
       throw new CliError(
-        "--adapter aceita auto, generic ou codex.",
+        "A opção legada --adapter aceita auto, generic ou codex.",
         EXIT_CODES.usageOrConfiguration,
       );
     }
+    const artifacts =
+      legacyAdapter === undefined
+        ? undefined
+        : legacyAdapter === "generic"
+          ? (["instructions"] satisfies AgentArtifact[])
+          : (["instructions", "skills"] satisfies AgentArtifact[]);
+    const appearance = readOption(options, "appearance");
+    if (
+      appearance !== undefined &&
+      !new Set(["light", "dark", "adaptive"]).has(appearance)
+    ) {
+      throw new CliError(
+        "--appearance aceita light, dark ou adaptive.",
+        EXIT_CODES.usageOrConfiguration,
+      );
+    }
+    const tokenAdaptersOption = readOption(options, "token-adapters");
+    const tokenAdapters = tokenAdaptersOption?.length
+      ? tokenAdaptersOption.split(",")
+      : tokenAdaptersOption === ""
+        ? []
+        : undefined;
+    if (
+      tokenAdapters?.some(
+        (adapter) => !new Set(["css", "delphi-vcl", "delphi-fmx"]).has(adapter),
+      )
+    ) {
+      throw new CliError(
+        "--token-adapters aceita css, delphi-vcl e delphi-fmx, separados por vírgula.",
+        EXIT_CODES.usageOrConfiguration,
+      );
+    }
+    const tokenOutput = readOption(options, "token-output");
     return {
       kind: "init",
       dryRun: options.includes("--dry-run"),
-      adapter: adapter as "auto" | "generic" | "codex",
+      ...(artifacts === undefined ? {} : { artifacts }),
+      ...(appearance === undefined
+        ? {}
+        : { appearance: appearance as AppearanceProfile }),
+      ...(tokenAdapters === undefined
+        ? {}
+        : { tokenAdapters: tokenAdapters as TokenAdapter[] }),
+      ...(tokenOutput === undefined ? {} : { tokenOutput }),
     };
   }
 

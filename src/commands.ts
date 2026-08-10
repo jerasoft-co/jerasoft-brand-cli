@@ -9,8 +9,9 @@ import { GitHubClient } from "./github";
 import type { CliIo } from "./io";
 import {
   assertCompatible,
+  auditTokenPayload,
+  configuredTokenPayloadIds,
   createDefaultConfig,
-  detectAdapters,
   initializeProject,
   inspectProject,
   loadProjectConfig,
@@ -18,6 +19,7 @@ import {
   lockFromResolved,
   lockMatchesManifest,
   materializeAsset,
+  materializeTokenPayload,
   writeProjectConfig,
   writeProjectLock,
 } from "./project";
@@ -25,6 +27,7 @@ import {
   receiptSchema,
   type ManifestPayload,
   type ProjectConfig,
+  type TokenAdapter,
 } from "./schemas";
 import { pathExists } from "./security";
 
@@ -57,6 +60,51 @@ async function resolveOnline(
     fresh,
   });
   return { resolved, token: authentication.token };
+}
+
+async function materializeConfiguredTokens(
+  runtime: CommandRuntime,
+  config: ProjectConfig,
+  resolved: ResolvedManifest,
+  token: string,
+  previousLock: Awaited<ReturnType<typeof loadProjectLock>> | null,
+) {
+  const descriptors = configuredTokenPayloadIds(config).map((id) => {
+    const payload = resolved.manifest.payloads.find(
+      (candidate) => candidate.id === id && candidate.kind === "contract",
+    );
+    if (!payload) {
+      throw new CliError(
+        `A release não contém o payload de tokens ${id}.`,
+        EXIT_CODES.integrity,
+      );
+    }
+    return payload;
+  });
+  const contents = await Promise.all(
+    descriptors.map((payload) =>
+      runtime.resolver.resolvePayload(resolved, payload, token),
+    ),
+  );
+  const results = await Promise.all(
+    descriptors.map((payload, index) => {
+      const payloadContents = contents.at(index);
+      if (!payloadContents) {
+        throw new CliError(
+          `O conteúdo do payload ${payload.id} não foi resolvido.`,
+          EXIT_CODES.integrity,
+        );
+      }
+      return materializeTokenPayload(
+        runtime.projectRoot,
+        config,
+        payload,
+        payloadContents,
+        previousLock?.payloads.find((candidate) => candidate.id === payload.id),
+      );
+    }),
+  );
+  return results.filter((result) => result.changed).length;
 }
 
 function payloadForProfile(
@@ -136,13 +184,61 @@ async function commandInit(
   runtime: CommandRuntime,
 ) {
   const inspection = await inspectProject(runtime.projectRoot);
-  if (inspection.agentsFile === "invalid-managed-block") {
+  const configPath = path.join(runtime.projectRoot, ".jerasoft", "brand.json");
+  const existingConfig = (await pathExists(configPath))
+    ? await loadProjectConfig(runtime.projectRoot)
+    : null;
+  const baseConfig = existingConfig
+    ? command.artifacts
+      ? { ...existingConfig, agentArtifacts: command.artifacts }
+      : existingConfig
+    : createDefaultConfig(command.artifacts);
+  const detectedAdapters: TokenAdapter[] = [];
+  if (
+    inspection.signals.some((signal) =>
+      new Set(["Next.js", "Vite"]).has(signal),
+    )
+  ) {
+    detectedAdapters.push("css");
+  }
+  if (inspection.signals.includes("Delphi VCL")) {
+    detectedAdapters.push("delphi-vcl");
+  }
+  if (inspection.signals.includes("Delphi FMX")) {
+    detectedAdapters.push("delphi-fmx");
+  }
+  const config: ProjectConfig = {
+    ...baseConfig,
+    appearance: {
+      ...baseConfig.appearance,
+      default: command.appearance ?? baseConfig.appearance.default,
+    },
+    tokens: {
+      ...baseConfig.tokens,
+      adapters:
+        command.tokenAdapters ??
+        (existingConfig ? baseConfig.tokens.adapters : detectedAdapters),
+      outputDirectory: command.tokenOutput ?? baseConfig.tokens.outputDirectory,
+    },
+  };
+  if (
+    config.agentArtifacts.includes("instructions") &&
+    inspection.agentsFile === "invalid-managed-block"
+  ) {
     throw new CliError(
       "O AGENTS.md contém um bloco JeraSoft incompleto ou duplicado. Corrija os marcadores antes de inicializar.",
       EXIT_CODES.integrity,
     );
   }
-  const adapters = await detectAdapters(runtime.projectRoot, command.adapter);
+  if (
+    config.agentArtifacts.includes("skills") &&
+    inspection.agentSkills.state === "conflict"
+  ) {
+    throw new CliError(
+      "Uma Agent Skill JeraSoft já existe, mas não é gerenciada pelo CLI. Preserve ou renomeie o arquivo antes de inicializar.",
+      EXIT_CODES.integrity,
+    );
+  }
   if (command.dryRun) {
     const projectType = inspection.existingProject
       ? "projeto existente"
@@ -154,17 +250,23 @@ async function commandInit(
           ? "preservar AGENTS.md e acrescentar o bloco JeraSoft"
           : "atualizar somente o bloco JeraSoft de AGENTS.md";
     io.stdout(
-      `Inicialização planejada sem escrita para ${projectType}: criar ou atualizar .jerasoft/brand.json e .jerasoft/brand.lock.json; ${agentsPlan}${adapters.includes("codex") ? "; criar ou atualizar três skills finas em .agents/skills" : ""}.`,
+      `Inicialização planejada sem escrita para ${projectType}: criar ou atualizar .jerasoft/brand.json e .jerasoft/brand.lock.json${config.agentArtifacts.includes("instructions") ? `; ${agentsPlan}` : ""}${config.agentArtifacts.includes("skills") ? "; criar ou atualizar três Agent Skills abertas em .agents/skills" : ""}.`,
     );
     return EXIT_CODES.success;
   }
 
-  const configPath = path.join(runtime.projectRoot, ".jerasoft", "brand.json");
-  const config = (await pathExists(configPath))
-    ? await loadProjectConfig(runtime.projectRoot)
-    : createDefaultConfig(adapters);
-  const { resolved } = await resolveOnline(runtime, true);
+  const { resolved, token } = await resolveOnline(runtime, true);
   assertCompatible(config, resolved);
+  const previousLock = inspection.brandLockPresent
+    ? await loadProjectLock(runtime.projectRoot)
+    : null;
+  const materialized = await materializeConfiguredTokens(
+    runtime,
+    config,
+    resolved,
+    token,
+    previousLock,
+  );
   await initializeProject(
     runtime.projectRoot,
     config,
@@ -176,11 +278,12 @@ async function commandInit(
       ? "Projeto existente integrado"
       : "Projeto inicializado";
   const preservation =
+    config.agentArtifacts.includes("instructions") &&
     inspection.agentsFile === "existing"
       ? " O conteúdo anterior de AGENTS.md foi preservado."
       : "";
   io.stdout(
-    `${action} com ${resolved.manifest.releaseTag} e contrato ${resolved.manifest.versions.contract}.${preservation}`,
+    `${action} com ${resolved.manifest.releaseTag} e contrato ${resolved.manifest.versions.contract}; ${String(materialized)} arquivo(s) de tokens atualizado(s).${preservation}`,
   );
   return EXIT_CODES.success;
 }
@@ -327,8 +430,31 @@ async function commandAudit(
     );
   }
   const verifiedPayloads = await verifyCachedPayloads(runtime, resolved);
+  const tokenDescriptors = configuredTokenPayloadIds(config).map((id) =>
+    resolved.manifest.payloads.find((payload) => payload.id === id),
+  );
+  if (tokenDescriptors.some((payload) => !payload)) {
+    throw new CliError(
+      "A release não contém todos os adapters de tokens configurados.",
+      EXIT_CODES.integrity,
+    );
+  }
+  const presentTokenDescriptors = tokenDescriptors.filter(
+    (payload): payload is ManifestPayload => payload !== undefined,
+  );
+  const tokenChecks = await Promise.all(
+    presentTokenDescriptors.map((payload) =>
+      auditTokenPayload(runtime.projectRoot, config, payload),
+    ),
+  );
+  if (tokenChecks.some((valid) => !valid)) {
+    throw new CliError(
+      "Os arquivos de tokens materializados estão ausentes ou divergentes.",
+      EXIT_CODES.drift,
+    );
+  }
   io.stdout(
-    `Auditoria concluída: lock ${matches ? "íntegro" : "com atualização disponível"}, manifesto sha256:${resolved.manifestSha256}, ${String(verifiedPayloads)} payload(s) em cache verificado(s).`,
+    `Auditoria concluída: lock ${matches ? "íntegro" : "com atualização disponível"}, manifesto sha256:${resolved.manifestSha256}, ${String(verifiedPayloads)} payload(s) em cache e ${String(tokenChecks.length)} arquivo(s) de tokens verificado(s).`,
   );
   return EXIT_CODES.success;
 }
@@ -339,13 +465,28 @@ async function commandSync(
   runtime: CommandRuntime,
 ) {
   const config = await loadProjectConfig(runtime.projectRoot);
-  const { resolved } = await resolveOnline(runtime, command.fresh);
+  const { resolved, token } = await resolveOnline(runtime, command.fresh);
   assertCompatible(config, resolved);
+  const previousLock = (await pathExists(
+    path.join(runtime.projectRoot, ".jerasoft", "brand.lock.json"),
+  ))
+    ? await loadProjectLock(runtime.projectRoot)
+    : null;
+  const materialized = await materializeConfiguredTokens(
+    runtime,
+    config,
+    resolved,
+    token,
+    previousLock,
+  );
+  await writeProjectConfig(runtime.projectRoot, config);
   await writeProjectLock(
     runtime.projectRoot,
     lockFromResolved(resolved, runtime.now()),
   );
-  io.stdout(`Lock sincronizado com ${resolved.manifest.releaseTag}.`);
+  io.stdout(
+    `Configuração, lock e tokens sincronizados com ${resolved.manifest.releaseTag}; ${String(materialized)} arquivo(s) atualizado(s).`,
+  );
   return EXIT_CODES.success;
 }
 

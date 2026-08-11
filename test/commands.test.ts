@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -257,6 +257,53 @@ describe("fluxo público do CLI", () => {
       ),
     ).toBe(EXIT_CODES.success);
     expect(capture.stdout.at(-1)).toContain("lock íntegro");
+
+    const agentsPath = path.join(projectRoot, "AGENTS.md");
+    const applySkillPath = path.join(
+      projectRoot,
+      ".agents/skills/jerasoft-apply-brand/SKILL.md",
+    );
+    await Promise.all([
+      readFile(agentsPath, "utf8").then((contents) =>
+        writeFile(
+          agentsPath,
+          contents.replace(
+            "npx @jerasoft/brand@1 context",
+            "bunx --bun @jerasoft/brand@1 context",
+          ),
+        ),
+      ),
+      readFile(applySkillPath, "utf8").then((contents) =>
+        writeFile(
+          applySkillPath,
+          contents.replace(
+            "npx @jerasoft/brand@1 context",
+            "bunx --bun @jerasoft/brand@1 context",
+          ),
+        ),
+      ),
+    ]);
+    expect(
+      await executeCommand({ kind: "sync", fresh: false }, capture.io, runtime),
+    ).toBe(EXIT_CODES.success);
+    const [syncedAgents, syncedApplySkill] = await Promise.all([
+      readFile(agentsPath, "utf8"),
+      readFile(applySkillPath, "utf8"),
+    ]);
+    expect(syncedAgents).toContain("npx @jerasoft/brand@1 context");
+    expect(syncedAgents).not.toContain("bunx --bun");
+    expect(syncedApplySkill).toContain("npx @jerasoft/brand@1 context");
+    expect(syncedApplySkill).not.toContain("bunx --bun");
+    expect(capture.stdout.at(-1)).toContain(
+      "artefatos de agente sincronizados",
+    );
+
+    const customSkill = "# Skill mantida pelo projeto\n";
+    await writeFile(applySkillPath, customSkill);
+    expect(
+      executeCommand({ kind: "sync", fresh: false }, capture.io, runtime),
+    ).rejects.toThrow("não é gerenciada");
+    expect(await readFile(applySkillPath, "utf8")).toBe(customSkill);
     expect(capture.stderr).toEqual([]);
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "@jerasoft/brand",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "CLI público para distribuição autenticada e verificável da marca JeraSoft.",
   "type": "module",
   "license": "UNLICENSED",

@@ -129,8 +129,10 @@ npx @jerasoft/brand@1 upgrade --major
 ```
 
 `context` e `audit` nunca modificam o projeto. `init` e `sync` reconciliam a
-configuração, o lock e os tokens; `upgrade` e a resolução de ativo também podem
-registrar uma nova resolução.
+configuração, o lock, os tokens, o bloco gerenciado de `AGENTS.md` e as Agent
+Skills gerenciadas; conteúdo externo aos marcadores e skills não gerenciadas
+são preservados. `upgrade` e a resolução de ativo também podem registrar uma
+nova resolução.
 
 ## Autenticação
 

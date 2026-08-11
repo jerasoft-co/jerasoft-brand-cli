@@ -465,6 +465,25 @@ async function commandSync(
   runtime: CommandRuntime,
 ) {
   const config = await loadProjectConfig(runtime.projectRoot);
+  const inspection = await inspectProject(runtime.projectRoot);
+  if (
+    config.agentArtifacts.includes("instructions") &&
+    inspection.agentsFile === "invalid-managed-block"
+  ) {
+    throw new CliError(
+      "O AGENTS.md contém um bloco JeraSoft incompleto. Corrija os marcadores antes de sincronizar.",
+      EXIT_CODES.integrity,
+    );
+  }
+  if (
+    config.agentArtifacts.includes("skills") &&
+    inspection.agentSkills.state === "conflict"
+  ) {
+    throw new CliError(
+      "Uma Agent Skill JeraSoft existente não é gerenciada pelo CLI. Preserve ou renomeie o arquivo antes de sincronizar.",
+      EXIT_CODES.integrity,
+    );
+  }
   const { resolved, token } = await resolveOnline(runtime, command.fresh);
   assertCompatible(config, resolved);
   const previousLock = (await pathExists(
@@ -479,13 +498,13 @@ async function commandSync(
     token,
     previousLock,
   );
-  await writeProjectConfig(runtime.projectRoot, config);
-  await writeProjectLock(
+  await initializeProject(
     runtime.projectRoot,
+    config,
     lockFromResolved(resolved, runtime.now()),
   );
   io.stdout(
-    `Configuração, lock e tokens sincronizados com ${resolved.manifest.releaseTag}; ${String(materialized)} arquivo(s) atualizado(s).`,
+    `Configuração, lock, tokens e artefatos de agente sincronizados com ${resolved.manifest.releaseTag}; ${String(materialized)} arquivo(s) de tokens atualizado(s).`,
   );
   return EXIT_CODES.success;
 }

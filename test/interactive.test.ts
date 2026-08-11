@@ -168,8 +168,36 @@ describe("menu interativo", () => {
         (option) => option.value === "context-apply",
       ),
     ).toMatchObject({
-      label: "Aplicar a marca",
-      hint: "context --profile=apply",
+      label: "Consultar instruções de aplicação",
+      hint: "context --profile=apply · somente leitura",
+    });
+  });
+
+  test("usa a atualização real como ação principal do projeto configurado", async () => {
+    const prompter = new ScriptedPrompter(["sync"]);
+    expect(
+      await run(
+        prompter,
+        inspection({
+          brandInitialized: true,
+          brandLockPresent: true,
+          agentsFile: "managed",
+        }),
+      ),
+    ).toEqual({ kind: "sync", fresh: false });
+    expect(prompter.menus[0]?.initialValue).toBe("sync");
+    expect(prompter.menus[0]?.options[0]).toMatchObject({
+      value: "sync",
+      label: "Atualizar integração da marca",
+      disabled: false,
+    });
+    expect(
+      prompter.menus[0]?.options.find(
+        (option) => option.value === "context-apply",
+      ),
+    ).toMatchObject({
+      label: "Consultar contrato e instruções",
+      hint: "somente leitura",
     });
   });
 
@@ -196,7 +224,7 @@ describe("menu interativo", () => {
     expect(
       catalog?.options.find((option) => option.value === "context-apply"),
     ).toMatchObject({
-      label: "Aplicar a marca",
+      label: "Consultar instruções de aplicação",
       hint: "inicialize o projeto primeiro",
       disabled: true,
     });

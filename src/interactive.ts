@@ -192,6 +192,21 @@ function integrationBlocked(inspection: ProjectInspection) {
   return integrationBlockHint(inspection) !== undefined;
 }
 
+function syncAvailability(
+  inspection: ProjectInspection,
+): Pick<PromptOption, "hint" | "disabled"> {
+  if (!inspection.brandInitialized) {
+    return { hint: "inicialize o projeto primeiro", disabled: true };
+  }
+  const blockedHint = integrationBlockHint(inspection);
+  return blockedHint
+    ? { hint: blockedHint, disabled: true }
+    : {
+        hint: "atualiza configuração, lock, tokens e instruções",
+        disabled: false,
+      };
+}
+
 function projectSummary(
   projectRoot: string,
   inspection: ProjectInspection,
@@ -378,13 +393,19 @@ function commandCatalog(inspection: ProjectInspection): PromptOption[] {
     },
     {
       value: "context-apply",
-      label: "Aplicar a marca",
-      ...requiresInitialization(inspection, "context --profile=apply"),
+      label: "Consultar instruções de aplicação",
+      ...requiresInitialization(
+        inspection,
+        "context --profile=apply · somente leitura",
+      ),
     },
     {
       value: "context-audit",
-      label: "Preparar auditoria de interface",
-      ...requiresInitialization(inspection, "context --profile=audit"),
+      label: "Consultar instruções de auditoria",
+      ...requiresInitialization(
+        inspection,
+        "context --profile=audit · somente leitura",
+      ),
     },
     {
       value: "context-assets",
@@ -408,8 +429,8 @@ function commandCatalog(inspection: ProjectInspection): PromptOption[] {
     },
     {
       value: "sync",
-      label: "Sincronizar a marca",
-      ...requiresInitialization(inspection, "sync"),
+      label: "Atualizar integração da marca",
+      ...syncAvailability(inspection),
     },
     {
       value: "upgrade",
@@ -431,7 +452,9 @@ async function chooseFromCommandCatalog(
   prompter: InteractivePrompter,
 ): Promise<InteractiveResult> {
   let initialValue = inspection.brandInitialized
-    ? "context-apply"
+    ? integrationBlocked(inspection)
+      ? "context-apply"
+      : "sync"
     : integrationBlocked(inspection)
       ? "back"
       : "init";
@@ -477,21 +500,25 @@ function mainMenuOptions(inspection: ProjectInspection): PromptOption[] {
 
   return [
     {
+      value: "sync",
+      label: "Atualizar integração da marca",
+      ...syncAvailability(inspection),
+    },
+    {
       value: "context-apply",
-      label: "Aplicar a marca",
-      hint: "resolve contrato e diretrizes",
+      label: "Consultar contrato e instruções",
+      hint: "somente leitura",
     },
     {
       value: "context-audit",
-      label: "Auditar uma interface",
-      hint: "contexto somente leitura",
+      label: "Consultar instruções de auditoria",
+      hint: "somente leitura",
     },
     {
       value: "context-assets",
       label: "Localizar ativos aprovados",
     },
     { value: "asset", label: "Materializar um ativo" },
-    { value: "sync", label: "Sincronizar o lock da marca" },
     {
       value: "audit",
       label: "Validar lock e cache",
@@ -535,7 +562,7 @@ export async function runInteractiveMenu(
   );
 
   let initialValue = inspection.brandInitialized
-    ? inspection.brandLockPresent
+    ? integrationBlocked(inspection)
       ? "context-apply"
       : "sync"
     : integrationBlocked(inspection)

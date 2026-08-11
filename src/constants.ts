@@ -11,6 +11,7 @@ export const CREDENTIAL_SERVICE = "br.com.jerasoft.brand-cli";
 export const CREDENTIAL_NAME = "github-device-flow";
 export const CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 export const TOKEN_EXPIRY_SKEW_MS = 60 * 1000;
+export const INTERACTIVE_UPDATE_TIMEOUT_MS = 3_000;
 export const DEFAULT_ASSET_DIRECTORY = "assets/brand";
 export const DEFAULT_TOKEN_DIRECTORY = ".jerasoft/generated";
 

@@ -168,6 +168,55 @@ describe("resolução e cache", () => {
     ).rejects.toMatchObject({ exitCode: EXIT_CODES.authentication });
   });
 
+  test("usa cache recente em abort e falha sem cache", async () => {
+    const cache = await temporaryCache();
+    const data = fixture();
+    const bootstrapResponses = [
+      new Response(JSON.stringify(data.release), { status: 200 }),
+      new Response(data.manifestContents),
+    ];
+    const bootstrap = new BrandResolver(
+      cache,
+      new GitHubClient(() => nextResponse(bootstrapResponses)),
+      () => new Date("2026-08-07T12:00:00.000Z"),
+    );
+    await bootstrap.resolveManifest({ token: "ghu_teste" });
+
+    const controller = new AbortController();
+    controller.abort();
+    const aborted = new BrandResolver(
+      cache,
+      new GitHubClient(() =>
+        Promise.reject(new DOMException("abortado", "AbortError")),
+      ),
+      () => new Date("2026-08-08T12:00:00.000Z"),
+    );
+    expect(
+      (
+        await aborted.resolveManifest({
+          token: "ghu_teste",
+          signal: controller.signal,
+        })
+      ).cacheState,
+    ).toBe("stale");
+
+    const emptyCache = await temporaryCache();
+    const withoutCache = new BrandResolver(
+      emptyCache,
+      new GitHubClient(() =>
+        Promise.reject(new DOMException("abortado", "AbortError")),
+      ),
+    );
+    expect(
+      withoutCache.resolveManifest({
+        token: "ghu_teste",
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({
+      exitCode: EXIT_CODES.networkWithoutCache,
+    });
+  });
+
   test("não usa cache vencido nem ignora --fresh", async () => {
     const cache = await temporaryCache();
     const data = fixture();

@@ -29,6 +29,12 @@ artefatos abertos para agentes e se a integração JeraSoft já foi inicializada
 Em ambientes sem TTY, o CLI falha sem bloquear o processo e orienta o uso de
 `--help`; todos os comandos explícitos continuam disponíveis para scripts e CI.
 
+Quando a integração e o lock já existem, o primeiro menu compara o lock com a
+release estável mais recente usando uma sessão reutilizável ou um cache íntegro
+e recente. Essa checagem é best effort, tem timeout curto, não inicia Device
+Flow e não altera nenhum arquivo do projeto. Sem sessão, rede ou cache, o menu
+abre normalmente e informa apenas que a atualização não pôde ser verificada.
+
 “Ver todos os comandos” abre um catálogo navegável dentro do próprio menu.
 Comandos que dependem da inicialização ou do lock continuam visíveis com a
 orientação necessária, mas ficam indisponíveis até o pré-requisito ser atendido.
@@ -133,6 +139,13 @@ configuração, o lock, os tokens, o bloco gerenciado de `AGENTS.md` e as Agent
 Skills gerenciadas; conteúdo externo aos marcadores e skills não gerenciadas
 são preservados. `upgrade` e a resolução de ativo também podem registrar uma
 nova resolução.
+
+O menu recomenda `sync` quando encontra um bundle compatível mais novo e mantém
+`upgrade --major` como confirmação explícita quando o contrato exige migração.
+A descoberta consulta a release do contrato, não o registry npm: por isso,
+executar `npx @jerasoft/brand@1` não exige uma nova versão do CLI para cada
+release compatível do contrato. Somente a ação escolhida depois da checagem
+aplica alterações ao projeto.
 
 ## Autenticação
 

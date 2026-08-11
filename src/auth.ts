@@ -148,6 +148,7 @@ async function postOAuth(
   fetcher: HttpFetcher,
   pathname: string,
   parameters: Record<string, string>,
+  signal?: AbortSignal,
 ) {
   let response: Response;
   try {
@@ -158,6 +159,7 @@ async function postOAuth(
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams(parameters),
+      ...(signal === undefined ? {} : { signal }),
     });
   } catch (error) {
     throw new CliError(
@@ -214,43 +216,8 @@ export class GitHubAuthenticator {
   }
 
   async resolveToken(): Promise<ResolvedToken> {
-    const environmentToken = this.environment.GH_TOKEN?.trim();
-    if (environmentToken) {
-      return { token: environmentToken, source: "environment" };
-    }
-
-    let stored: StoredCredential | null = null;
-    try {
-      stored = await this.credentialStore.get();
-    } catch {
-      this.io.stderr(
-        "O cofre seguro do sistema não pôde ser consultado; a sessão não será reutilizada.",
-      );
-    }
-
-    if (stored) {
-      const now = this.now().getTime();
-      if (Date.parse(stored.expiresAt) - TOKEN_EXPIRY_SKEW_MS > now) {
-        return { token: stored.accessToken, source: "keychain" };
-      }
-      if (Date.parse(stored.refreshExpiresAt) > now) {
-        try {
-          const refreshed = await this.refresh(stored.refreshToken);
-          await this.persistBestEffort(refreshed);
-          return { token: refreshed.accessToken, source: "keychain" };
-        } catch (error) {
-          if (
-            error instanceof CliError &&
-            error.exitCode === EXIT_CODES.networkWithoutCache
-          ) {
-            throw error;
-          }
-          await this.deleteBestEffort();
-        }
-      } else {
-        await this.deleteBestEffort();
-      }
-    }
+    const reusable = await this.resolveReusableToken();
+    if (reusable) return reusable;
 
     if (this.environment.CI === "true") {
       throw new CliError(
@@ -263,17 +230,75 @@ export class GitHubAuthenticator {
     return { token: credential.accessToken, source: "device-flow" };
   }
 
+  async resolveTokenSilently(
+    signal?: AbortSignal,
+  ): Promise<ResolvedToken | null> {
+    return this.resolveReusableToken(signal, true);
+  }
+
+  private async resolveReusableToken(
+    signal?: AbortSignal,
+    silent = false,
+  ): Promise<ResolvedToken | null> {
+    const environmentToken = this.environment.GH_TOKEN?.trim();
+    if (environmentToken) {
+      return { token: environmentToken, source: "environment" };
+    }
+
+    let stored: StoredCredential | null;
+    try {
+      stored = await this.credentialStore.get();
+    } catch {
+      if (!silent) {
+        this.io.stderr(
+          "O cofre seguro do sistema não pôde ser consultado; a sessão não será reutilizada.",
+        );
+      }
+      return null;
+    }
+
+    if (stored) {
+      const now = this.now().getTime();
+      if (Date.parse(stored.expiresAt) - TOKEN_EXPIRY_SKEW_MS > now) {
+        return { token: stored.accessToken, source: "keychain" };
+      }
+      if (Date.parse(stored.refreshExpiresAt) > now) {
+        try {
+          const refreshed = await this.refresh(stored.refreshToken, signal);
+          await this.persistBestEffort(refreshed, silent);
+          return { token: refreshed.accessToken, source: "keychain" };
+        } catch (error) {
+          if (
+            error instanceof CliError &&
+            error.exitCode === EXIT_CODES.networkWithoutCache
+          ) {
+            throw error;
+          }
+          await this.deleteBestEffort(silent);
+        }
+      } else {
+        await this.deleteBestEffort(silent);
+      }
+    }
+    return null;
+  }
+
   async logout() {
     await this.deleteBestEffort();
   }
 
-  private async refresh(refreshToken: string) {
+  private async refresh(refreshToken: string, signal?: AbortSignal) {
     const response = tokenResponseSchema.safeParse(
-      await postOAuth(this.fetcher, "/login/oauth/access_token", {
-        client_id: GITHUB_APP_CLIENT_ID,
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-      }),
+      await postOAuth(
+        this.fetcher,
+        "/login/oauth/access_token",
+        {
+          client_id: GITHUB_APP_CLIENT_ID,
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+        },
+        signal,
+      ),
     );
     if (!response.success) {
       throw new CliError(
@@ -336,20 +361,26 @@ export class GitHubAuthenticator {
     );
   }
 
-  private async persistBestEffort(credential: StoredCredential) {
+  private async persistBestEffort(
+    credential: StoredCredential,
+    silent = false,
+  ) {
     try {
       await this.credentialStore.set(credential);
     } catch {
-      this.io.stderr(
-        "Autenticado, mas o cofre seguro não armazenou a sessão; um novo login poderá ser solicitado.",
-      );
+      if (!silent) {
+        this.io.stderr(
+          "Autenticado, mas o cofre seguro não armazenou a sessão; um novo login poderá ser solicitado.",
+        );
+      }
     }
   }
 
-  private async deleteBestEffort() {
+  private async deleteBestEffort(silent = false) {
     try {
       await this.credentialStore.delete();
     } catch {
+      if (silent) return;
       throw new CliError(
         "Não foi possível remover a sessão do cofre seguro do sistema.",
         EXIT_CODES.authentication,

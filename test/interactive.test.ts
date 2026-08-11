@@ -7,6 +7,7 @@ import {
   type InteractivePrompter,
 } from "../src/interactive";
 import type { ProjectInspection } from "../src/project";
+import type { BrandUpdateStatus } from "../src/update-status";
 
 class ScriptedPrompter implements InteractivePrompter {
   readonly messages: string[] = [];
@@ -87,6 +88,17 @@ function inspection(
 function run(
   prompter: ScriptedPrompter,
   project: ProjectInspection,
+  updateStatus: BrandUpdateStatus = project.brandInitialized
+    ? project.brandLockPresent
+      ? {
+          kind: "current",
+          installed: versions("1.2.0"),
+          available: versions("1.2.0"),
+          releaseTag: "brand-kit-v1.2.0",
+          cacheState: "fresh",
+        }
+      : { kind: "lock-missing" }
+    : { kind: "not-initialized" },
   colors = false,
 ) {
   return runInteractiveMenu({
@@ -95,7 +107,32 @@ function run(
     terminal: { interactive: true },
     colors,
     inspect: () => Promise.resolve(project),
+    checkUpdate: () => Promise.resolve(updateStatus),
   });
+}
+
+function versions(version: string) {
+  return {
+    bundle: version,
+    contract: version,
+    skills: version,
+    assets: version,
+  };
+}
+
+function versionStatus(
+  kind: "current" | "update-available" | "major-update" | "local-ahead",
+  installed: string,
+  available: string,
+  cacheState: "fresh" | "cached" | "stale" = "fresh",
+): BrandUpdateStatus {
+  return {
+    kind,
+    installed: versions(installed),
+    available: versions(available),
+    releaseTag: `brand-kit-v${available}`,
+    cacheState,
+  };
 }
 
 describe("menu interativo", () => {
@@ -175,6 +212,7 @@ describe("menu interativo", () => {
 
   test("usa a atualização real como ação principal do projeto configurado", async () => {
     const prompter = new ScriptedPrompter(["sync"]);
+    const updateStatus = versionStatus("update-available", "1.1.0", "1.2.0");
     expect(
       await run(
         prompter,
@@ -183,12 +221,14 @@ describe("menu interativo", () => {
           brandLockPresent: true,
           agentsFile: "managed",
         }),
+        updateStatus,
       ),
     ).toEqual({ kind: "sync", fresh: false });
     expect(prompter.menus[0]?.initialValue).toBe("sync");
     expect(prompter.menus[0]?.options[0]).toMatchObject({
       value: "sync",
-      label: "Atualizar integração da marca",
+      label: "Atualizar para o contrato 1.2.0",
+      hint: "bundle 1.2.0",
       disabled: false,
     });
     expect(
@@ -199,6 +239,176 @@ describe("menu interativo", () => {
       label: "Consultar contrato e instruções",
       hint: "somente leitura",
     });
+    expect(prompter.messages.join("\n")).toContain(
+      "Atualização disponível · contrato 1.1.0 → 1.2.0",
+    );
+  });
+
+  test("lock vigente recomenda consultar o contrato", async () => {
+    const prompter = new ScriptedPrompter(["exit"]);
+    await run(
+      prompter,
+      inspection({
+        brandInitialized: true,
+        brandLockPresent: true,
+        agentsFile: "managed",
+      }),
+      versionStatus("current", "1.2.0", "1.2.0"),
+    );
+
+    expect(prompter.menus[0]?.initialValue).toBe("context-apply");
+    expect(
+      prompter.menus[0]?.options.find((option) => option.value === "sync"),
+    ).toMatchObject({
+      label: "Sincronizar integração da marca",
+      hint: "contrato 1.2.0 já está vigente",
+    });
+    expect(prompter.messages.join("\n")).toContain(
+      "Atualizada · contrato 1.2.0 · bundle 1.2.0",
+    );
+  });
+
+  test("novo major recomenda upgrade explícito", async () => {
+    const prompter = new ScriptedPrompter(["upgrade"], [], [true]);
+    expect(
+      await run(
+        prompter,
+        inspection({
+          brandInitialized: true,
+          brandLockPresent: true,
+          agentsFile: "managed",
+        }),
+        versionStatus("major-update", "1.2.0", "2.0.0"),
+      ),
+    ).toEqual({ kind: "upgrade", major: true });
+    expect(prompter.menus[0]?.initialValue).toBe("upgrade");
+    expect(
+      prompter.menus[0]?.options.find((option) => option.value === "upgrade"),
+    ).toMatchObject({ label: "Migrar para o contrato 2.0.0" });
+    expect(prompter.messages.join("\n")).toContain(
+      "Migração necessária · contrato 1.2.0 → 2.0.0",
+    );
+  });
+
+  test("lock local mais novo não recomenda sincronização", async () => {
+    const prompter = new ScriptedPrompter(["exit"]);
+    await run(
+      prompter,
+      inspection({
+        brandInitialized: true,
+        brandLockPresent: true,
+        agentsFile: "managed",
+      }),
+      versionStatus("local-ahead", "1.3.0", "1.2.0"),
+    );
+
+    expect(prompter.menus[0]?.initialValue).toBe("context-apply");
+    expect(
+      prompter.menus[0]?.options.find((option) => option.value === "sync"),
+    ).toMatchObject({
+      hint: "lock local mais novo · atualização não recomendada",
+    });
+    expect(prompter.messages.join("\n")).toContain(
+      "Lock local mais novo · atualização não recomendada",
+    );
+  });
+
+  test("checagem indisponível abre normalmente em ação de leitura", async () => {
+    const prompter = new ScriptedPrompter(["exit"]);
+    await run(
+      prompter,
+      inspection({
+        brandInitialized: true,
+        brandLockPresent: true,
+        agentsFile: "managed",
+      }),
+      {
+        kind: "unavailable",
+        installed: versions("1.2.0"),
+        reason: "network",
+      },
+    );
+
+    expect(prompter.menus[0]?.initialValue).toBe("context-apply");
+    expect(
+      prompter.menus[0]?.options.find((option) => option.value === "sync"),
+    ).toMatchObject({ hint: "não foi possível verificar agora" });
+    expect(prompter.messages.join("\n")).toContain(
+      "Configurada · atualização não verificada",
+    );
+  });
+
+  test("atualização detectada no cache mantém aviso nas duas telas", async () => {
+    const prompter = new ScriptedPrompter(["help", "back", "exit"]);
+    await run(
+      prompter,
+      inspection({
+        brandInitialized: true,
+        brandLockPresent: true,
+        agentsFile: "managed",
+      }),
+      versionStatus("update-available", "1.1.0", "1.2.0", "stale"),
+    );
+
+    expect(prompter.menus[0]?.initialValue).toBe("sync");
+    const mainSync = prompter.menus[0]?.options.find(
+      (option) => option.value === "sync",
+    );
+    const catalogSync = prompter.menus[1]?.options.find(
+      (option) => option.value === "sync",
+    );
+    expect(mainSync).toMatchObject({
+      label: "Atualizar para o contrato 1.2.0",
+      hint: "bundle 1.2.0 · detectado no cache · confirme online",
+    });
+    expect(catalogSync).toMatchObject(mainSync ?? {});
+  });
+
+  test("lock ausente recomenda sincronizar sem chamar o checker", async () => {
+    const prompter = new ScriptedPrompter(["exit"]);
+    let checkerCalls = 0;
+    await runInteractiveMenu({
+      projectRoot: "/workspace/existente",
+      prompter,
+      terminal: { interactive: true },
+      colors: false,
+      inspect: () =>
+        Promise.resolve(
+          inspection({ brandInitialized: true, brandLockPresent: false }),
+        ),
+      checkUpdate: () => {
+        checkerCalls += 1;
+        return Promise.resolve({ kind: "unavailable", reason: "network" });
+      },
+    });
+
+    expect(checkerCalls).toBe(0);
+    expect(prompter.menus[0]?.initialValue).toBe("sync");
+    expect(
+      prompter.menus[0]?.options.find((option) => option.value === "sync"),
+    ).toMatchObject({ hint: "sincroniza o lock da marca" });
+    expect(prompter.messages.join("\n")).toContain(
+      "Configurada · lock ausente",
+    );
+  });
+
+  test("projeto não inicializado não chama o checker", async () => {
+    const prompter = new ScriptedPrompter(["exit"]);
+    let checkerCalls = 0;
+    await runInteractiveMenu({
+      projectRoot: "/workspace/existente",
+      prompter,
+      terminal: { interactive: true },
+      colors: false,
+      inspect: () => Promise.resolve(inspection()),
+      checkUpdate: () => {
+        checkerCalls += 1;
+        return Promise.resolve({ kind: "unavailable", reason: "network" });
+      },
+    });
+
+    expect(checkerCalls).toBe(0);
+    expect(prompter.menus[0]?.initialValue).toBe("init");
   });
 
   test("permite consultar a versão e voltar do catálogo ao menu principal", async () => {
@@ -343,13 +553,14 @@ describe("menu interativo", () => {
           agentsFile: "managed",
           agentSkills: { state: "absent", installed: 0, total: 3 },
         }),
+        versionStatus("current", "1.2.0", "1.2.0"),
         true,
       ),
     ).toBeNull();
     const output = prompter.messages.join("\n");
     expect(output).toContain("\u001B[32m✓\u001B[39m");
     expect(output).toContain("\u001B[33m!\u001B[39m");
-    expect(output).toContain("Configurada · lock presente");
+    expect(output).toContain("Atualizada · contrato 1.2.0 · bundle 1.2.0");
   });
 
   test("coleta ID e destino ao materializar um ativo", async () => {

@@ -263,6 +263,7 @@ export class BrandResolver {
     token?: string;
     fresh?: boolean;
     offline?: boolean;
+    signal?: AbortSignal;
   }): Promise<ResolvedManifest> {
     const cached = await this.cache.loadLatest();
     if (options.offline) {
@@ -277,7 +278,11 @@ export class BrandResolver {
 
     let latest;
     try {
-      latest = await this.github.latestRelease(options.token, cached?.etag);
+      latest = await this.github.latestRelease(
+        options.token,
+        cached?.etag,
+        options.signal,
+      );
     } catch (error) {
       if (
         !options.fresh &&
@@ -323,6 +328,7 @@ export class BrandResolver {
       manifestContents = await this.github.downloadAsset(
         options.token,
         manifestAsset.id,
+        options.signal,
       );
       if (
         manifestContents.byteLength !== manifestAsset.size ||

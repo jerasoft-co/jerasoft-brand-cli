@@ -147,6 +147,7 @@ export class GitHubClient {
   async latestRelease(
     token: string,
     etag?: string | null,
+    signal?: AbortSignal,
   ): Promise<LatestReleaseResult> {
     const headers: Record<string, string> = apiHeaders(token);
     if (etag) headers["If-None-Match"] = etag;
@@ -155,7 +156,11 @@ export class GitHubClient {
     try {
       response = await this.fetcher(
         `${GITHUB_API_ORIGIN}/repos/${SOURCE_REPOSITORY}/releases/latest`,
-        { headers, redirect: "manual" },
+        {
+          headers,
+          redirect: "manual",
+          ...(signal === undefined ? {} : { signal }),
+        },
       );
     } catch (error) {
       throw new GitHubRequestError(
@@ -175,7 +180,7 @@ export class GitHubClient {
     };
   }
 
-  async downloadAsset(token: string, assetId: number) {
+  async downloadAsset(token: string, assetId: number, signal?: AbortSignal) {
     let response: Response;
     try {
       response = await this.fetcher(
@@ -183,6 +188,7 @@ export class GitHubClient {
         {
           headers: apiHeaders(token, "application/octet-stream"),
           redirect: "manual",
+          ...(signal === undefined ? {} : { signal }),
         },
       );
     } catch (error) {
@@ -218,7 +224,10 @@ export class GitHubClient {
         );
       }
       try {
-        response = await this.fetcher(downloadUrl, { redirect: "error" });
+        response = await this.fetcher(downloadUrl, {
+          redirect: "error",
+          ...(signal === undefined ? {} : { signal }),
+        });
       } catch (error) {
         throw new GitHubRequestError(
           "Não foi possível concluir o download verificado da marca.",

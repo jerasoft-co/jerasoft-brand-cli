@@ -16,6 +16,11 @@ import { EXIT_CODES } from "./constants";
 import { CliError } from "./errors";
 import { defaultTerminalState, type TerminalState } from "./io";
 import { inspectProject, type ProjectInspection } from "./project";
+import {
+  defaultBrandUpdateChecker,
+  type BrandUpdateChecker,
+  type BrandUpdateStatus,
+} from "./update-status";
 
 interface PromptOption {
   value: string;
@@ -80,6 +85,7 @@ interface InteractiveOptions {
   prompter?: InteractivePrompter;
   terminal?: TerminalState;
   inspect?: (projectRoot: string) => Promise<ProjectInspection>;
+  checkUpdate?: BrandUpdateChecker;
   colors?: boolean;
 }
 
@@ -194,22 +200,113 @@ function integrationBlocked(inspection: ProjectInspection) {
 
 function syncAvailability(
   inspection: ProjectInspection,
+  updateStatus: BrandUpdateStatus,
 ): Pick<PromptOption, "hint" | "disabled"> {
   if (!inspection.brandInitialized) {
     return { hint: "inicialize o projeto primeiro", disabled: true };
   }
   const blockedHint = integrationBlockHint(inspection);
-  return blockedHint
-    ? { hint: blockedHint, disabled: true }
-    : {
-        hint: "atualiza configuração, lock, tokens e instruções",
+  if (blockedHint) return { hint: blockedHint, disabled: true };
+  switch (updateStatus.kind) {
+    case "current":
+      return {
+        hint: `contrato ${updateStatus.available.contract} já está vigente`,
         disabled: false,
       };
+    case "update-available":
+      return {
+        hint: `bundle ${updateStatus.available.bundle}${
+          updateStatus.cacheState === "stale"
+            ? " · detectado no cache · confirme online"
+            : ""
+        }`,
+        disabled: false,
+      };
+    case "major-update":
+      return {
+        hint: "novo contrato major exige migração explícita",
+        disabled: false,
+      };
+    case "local-ahead":
+      return {
+        hint: "lock local mais novo · atualização não recomendada",
+        disabled: false,
+      };
+    case "unavailable":
+      return {
+        hint: "não foi possível verificar agora",
+        disabled: false,
+      };
+    case "lock-missing":
+      return { hint: "sincroniza o lock da marca", disabled: false };
+    case "not-initialized":
+      return { hint: "inicialize o projeto primeiro", disabled: true };
+  }
+}
+
+function syncLabel(updateStatus: BrandUpdateStatus) {
+  return updateStatus.kind === "update-available"
+    ? `Atualizar para o contrato ${updateStatus.available.contract}`
+    : "Sincronizar integração da marca";
+}
+
+function upgradeLabel(updateStatus: BrandUpdateStatus) {
+  return updateStatus.kind === "major-update"
+    ? `Migrar para o contrato ${updateStatus.available.contract}`
+    : "Migrar contrato major";
+}
+
+function brandStatus(updateStatus: BrandUpdateStatus) {
+  switch (updateStatus.kind) {
+    case "not-initialized":
+      return {
+        symbol: "!",
+        tone: "warning" as const,
+        value: "Não configurada",
+      };
+    case "lock-missing":
+      return {
+        symbol: "!",
+        tone: "warning" as const,
+        value: "Configurada · lock ausente",
+      };
+    case "current":
+      return {
+        symbol: "✓",
+        tone: "success" as const,
+        value: `Atualizada · contrato ${updateStatus.available.contract} · bundle ${updateStatus.available.bundle}`,
+      };
+    case "update-available":
+      return {
+        symbol: "!",
+        tone: "warning" as const,
+        value: `Atualização disponível · contrato ${updateStatus.installed.contract} → ${updateStatus.available.contract}`,
+      };
+    case "major-update":
+      return {
+        symbol: "×",
+        tone: "danger" as const,
+        value: `Migração necessária · contrato ${updateStatus.installed.contract} → ${updateStatus.available.contract}`,
+      };
+    case "local-ahead":
+      return {
+        symbol: "!",
+        tone: "warning" as const,
+        value: "Lock local mais novo · atualização não recomendada",
+      };
+    case "unavailable":
+      return {
+        symbol: "○",
+        tone: "muted" as const,
+        value: "Configurada · atualização não verificada",
+      };
+  }
 }
 
 function projectSummary(
   projectRoot: string,
   inspection: ProjectInspection,
+  updateStatus: BrandUpdateStatus,
   colors: boolean,
 ) {
   const project = inspection.existingProject
@@ -219,19 +316,7 @@ function projectSummary(
         value: `Existente${inspection.signals.length > 0 ? ` · ${inspection.signals.join(", ")}` : ""}`,
       }
     : { symbol: "○", tone: "info" as const, value: "Diretório novo" };
-  const brand = !inspection.brandInitialized
-    ? { symbol: "!", tone: "warning" as const, value: "Não configurada" }
-    : inspection.brandLockPresent
-      ? {
-          symbol: "✓",
-          tone: "success" as const,
-          value: "Configurada · lock presente",
-        }
-      : {
-          symbol: "!",
-          tone: "warning" as const,
-          value: "Configurada · lock ausente",
-        };
+  const brand = brandStatus(updateStatus);
   const agents = agentsStatus(inspection);
   const agentSkills = agentSkillsStatus(inspection);
   return [
@@ -381,7 +466,10 @@ function requiresInitialization(
     : { hint: "inicialize o projeto primeiro", disabled: true };
 }
 
-function commandCatalog(inspection: ProjectInspection): PromptOption[] {
+function commandCatalog(
+  inspection: ProjectInspection,
+  updateStatus: BrandUpdateStatus,
+): PromptOption[] {
   return [
     {
       value: "init",
@@ -429,12 +517,12 @@ function commandCatalog(inspection: ProjectInspection): PromptOption[] {
     },
     {
       value: "sync",
-      label: "Atualizar integração da marca",
-      ...syncAvailability(inspection),
+      label: syncLabel(updateStatus),
+      ...syncAvailability(inspection, updateStatus),
     },
     {
       value: "upgrade",
-      label: "Migrar contrato major",
+      label: upgradeLabel(updateStatus),
       ...requiresInitialization(inspection, "upgrade --major"),
     },
     { value: "logout", label: "Encerrar sessão local", hint: "logout" },
@@ -449,19 +537,14 @@ function commandCatalog(inspection: ProjectInspection): PromptOption[] {
 
 async function chooseFromCommandCatalog(
   inspection: ProjectInspection,
+  updateStatus: BrandUpdateStatus,
   prompter: InteractivePrompter,
 ): Promise<InteractiveResult> {
-  let initialValue = inspection.brandInitialized
-    ? integrationBlocked(inspection)
-      ? "context-apply"
-      : "sync"
-    : integrationBlocked(inspection)
-      ? "back"
-      : "init";
+  let initialValue = preferredAction(inspection, updateStatus, true);
   for (;;) {
     const selection = await prompter.select(
       "Qual ação você deseja executar?",
-      commandCatalog(inspection),
+      commandCatalog(inspection, updateStatus),
       initialValue,
     );
     if (!selection) return "cancel";
@@ -481,7 +564,10 @@ async function chooseFromCommandCatalog(
   }
 }
 
-function mainMenuOptions(inspection: ProjectInspection): PromptOption[] {
+function mainMenuOptions(
+  inspection: ProjectInspection,
+  updateStatus: BrandUpdateStatus,
+): PromptOption[] {
   if (!inspection.brandInitialized) {
     return [
       {
@@ -501,8 +587,8 @@ function mainMenuOptions(inspection: ProjectInspection): PromptOption[] {
   return [
     {
       value: "sync",
-      label: "Atualizar integração da marca",
-      ...syncAvailability(inspection),
+      label: syncLabel(updateStatus),
+      ...syncAvailability(inspection, updateStatus),
     },
     {
       value: "context-apply",
@@ -533,11 +619,34 @@ function mainMenuOptions(inspection: ProjectInspection): PromptOption[] {
       hint: integrationBlockHint(inspection) ?? "preserva conteúdo existente",
       disabled: integrationBlocked(inspection),
     },
-    { value: "upgrade", label: "Migrar contrato major" },
+    { value: "upgrade", label: upgradeLabel(updateStatus) },
     { value: "logout", label: "Encerrar sessão local" },
     { value: "help", label: "Ver todos os comandos" },
     { value: "exit", label: "Sair" },
   ];
+}
+
+function preferredAction(
+  inspection: ProjectInspection,
+  updateStatus: BrandUpdateStatus,
+  catalog = false,
+) {
+  if (!inspection.brandInitialized) {
+    return integrationBlocked(inspection)
+      ? catalog
+        ? "back"
+        : "help"
+      : "init";
+  }
+  if (integrationBlocked(inspection)) return "context-apply";
+  if (
+    updateStatus.kind === "update-available" ||
+    updateStatus.kind === "lock-missing"
+  ) {
+    return "sync";
+  }
+  if (updateStatus.kind === "major-update") return "upgrade";
+  return "context-apply";
 }
 
 export async function runInteractiveMenu(
@@ -554,24 +663,23 @@ export async function runInteractiveMenu(
   const projectRoot = options.projectRoot ?? process.cwd();
   const prompter = options.prompter ?? defaultPrompter;
   const inspection = await (options.inspect ?? inspectProject)(projectRoot);
+  const updateStatus = !inspection.brandInitialized
+    ? ({ kind: "not-initialized" } as const)
+    : !inspection.brandLockPresent
+      ? ({ kind: "lock-missing" } as const)
+      : await (options.checkUpdate ?? defaultBrandUpdateChecker)(projectRoot);
   const colors = options.colors ?? colorsSupported();
   prompter.intro(`JeraSoft Brand CLI ${packageMetadata.version}`);
   prompter.note(
-    projectSummary(projectRoot, inspection, colors),
+    projectSummary(projectRoot, inspection, updateStatus, colors),
     "Projeto detectado",
   );
 
-  let initialValue = inspection.brandInitialized
-    ? integrationBlocked(inspection)
-      ? "context-apply"
-      : "sync"
-    : integrationBlocked(inspection)
-      ? "help"
-      : "init";
+  let initialValue = preferredAction(inspection, updateStatus);
   for (;;) {
     const selection = await prompter.select(
       "O que você deseja fazer?",
-      mainMenuOptions(inspection),
+      mainMenuOptions(inspection, updateStatus),
       initialValue,
     );
     if (!selection) {
@@ -585,7 +693,7 @@ export async function runInteractiveMenu(
 
     const result =
       selection === "help"
-        ? await chooseFromCommandCatalog(inspection, prompter)
+        ? await chooseFromCommandCatalog(inspection, updateStatus, prompter)
         : await commandFromSelection(selection, inspection, prompter);
     if (result === "back") {
       initialValue = selection;

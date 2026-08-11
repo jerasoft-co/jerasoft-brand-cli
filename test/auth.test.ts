@@ -114,6 +114,193 @@ describe("autenticação GitHub", () => {
     expect(capture.stdout).toEqual([]);
   });
 
+  test("resolução silenciosa sem sessão não inicia Device Flow", async () => {
+    const store = new MemoryCredentialStore();
+    const capture = silentIo();
+    let requests = 0;
+    let browserCalls = 0;
+    const authenticator = new GitHubAuthenticator(capture.io, {
+      credentialStore: store,
+      fetcher: () => {
+        requests += 1;
+        return Promise.resolve(jsonResponse({}));
+      },
+      openBrowser: () => {
+        browserCalls += 1;
+      },
+      environment: {},
+    });
+
+    expect(await authenticator.resolveTokenSilently()).toBeNull();
+    expect(requests).toBe(0);
+    expect(browserCalls).toBe(0);
+    expect(capture.stdout).toEqual([]);
+    expect(capture.stderr).toEqual([]);
+  });
+
+  test("resolução silenciosa reutiliza GH_TOKEN sem persistir", async () => {
+    const store = new MemoryCredentialStore();
+    const authenticator = new GitHubAuthenticator(silentIo().io, {
+      credentialStore: store,
+      environment: { GH_TOKEN: "ghu_silencioso" },
+    });
+
+    expect(await authenticator.resolveTokenSilently()).toEqual({
+      token: "ghu_silencioso",
+      source: "environment",
+    });
+    expect(store.credential).toBeNull();
+  });
+
+  test("resolução silenciosa reutiliza access token válido sem rede", async () => {
+    const store = new MemoryCredentialStore();
+    store.credential = {
+      schemaVersion: 1,
+      accessToken: "ghu_valido",
+      expiresAt: "2026-08-11T14:00:00.000Z",
+      refreshToken: "ghr_valido",
+      refreshExpiresAt: "2027-01-01T00:00:00.000Z",
+    };
+    let requests = 0;
+    const authenticator = new GitHubAuthenticator(silentIo().io, {
+      credentialStore: store,
+      fetcher: () => {
+        requests += 1;
+        return Promise.resolve(jsonResponse({}));
+      },
+      now: () => new Date("2026-08-11T12:00:00.000Z"),
+      environment: {},
+    });
+
+    expect(await authenticator.resolveTokenSilently()).toEqual({
+      token: "ghu_valido",
+      source: "keychain",
+    });
+    expect(requests).toBe(0);
+  });
+
+  test("resolução silenciosa renova token e encaminha cancelamento", async () => {
+    const store = new MemoryCredentialStore();
+    store.credential = {
+      schemaVersion: 1,
+      accessToken: "ghu_expirado",
+      expiresAt: "2026-08-11T11:00:00.000Z",
+      refreshToken: "ghr_valido",
+      refreshExpiresAt: "2027-01-01T00:00:00.000Z",
+    };
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | null | undefined;
+    const authenticator = new GitHubAuthenticator(silentIo().io, {
+      credentialStore: store,
+      fetcher: (_input, init) => {
+        receivedSignal = init?.signal;
+        return Promise.resolve(
+          jsonResponse({
+            access_token: "ghu_renovado",
+            expires_in: 28_800,
+            refresh_token: "ghr_renovado",
+            refresh_token_expires_in: 15_897_600,
+            token_type: "bearer",
+          }),
+        );
+      },
+      now: () => new Date("2026-08-11T12:00:00.000Z"),
+      environment: {},
+    });
+
+    expect(await authenticator.resolveTokenSilently(controller.signal)).toEqual(
+      {
+        token: "ghu_renovado",
+        source: "keychain",
+      },
+    );
+    expect(receivedSignal).toBe(controller.signal);
+    expect(store.credential).toMatchObject({
+      accessToken: "ghu_renovado",
+      refreshToken: "ghr_renovado",
+    });
+  });
+
+  test("resolução silenciosa remove refresh expirado ou inválido", async () => {
+    const store = new MemoryCredentialStore();
+    store.credential = {
+      schemaVersion: 1,
+      accessToken: "ghu_expirado",
+      expiresAt: "2026-08-11T10:00:00.000Z",
+      refreshToken: "ghr_expirado",
+      refreshExpiresAt: "2026-08-11T11:00:00.000Z",
+    };
+    const authenticator = new GitHubAuthenticator(silentIo().io, {
+      credentialStore: store,
+      now: () => new Date("2026-08-11T12:00:00.000Z"),
+      environment: {},
+    });
+
+    expect(await authenticator.resolveTokenSilently()).toBeNull();
+    expect(store.deletions).toBe(1);
+
+    store.credential = {
+      schemaVersion: 1,
+      accessToken: "ghu_expirado",
+      expiresAt: "2026-08-11T10:00:00.000Z",
+      refreshToken: "ghr_invalido",
+      refreshExpiresAt: "2027-01-01T00:00:00.000Z",
+    };
+    const invalidRefresh = new GitHubAuthenticator(silentIo().io, {
+      credentialStore: store,
+      fetcher: () => Promise.resolve(jsonResponse({ error: "bad_refresh" })),
+      now: () => new Date("2026-08-11T12:00:00.000Z"),
+      environment: {},
+    });
+
+    expect(await invalidRefresh.resolveTokenSilently()).toBeNull();
+    expect(store.deletions).toBe(2);
+  });
+
+  test("resolução silenciosa degrada quando o keychain está indisponível", async () => {
+    const capture = silentIo();
+    const store: CredentialStore = {
+      get: () => Promise.reject(new Error("keychain indisponível")),
+      set: () => Promise.reject(new Error("keychain indisponível")),
+      delete: () => Promise.reject(new Error("keychain indisponível")),
+    };
+    const authenticator = new GitHubAuthenticator(capture.io, {
+      credentialStore: store,
+      environment: {},
+    });
+
+    expect(await authenticator.resolveTokenSilently()).toBeNull();
+    expect(capture.stdout).toEqual([]);
+    expect(capture.stderr).toEqual([]);
+  });
+
+  test("resolução silenciosa preserva credencial em abort transitório", async () => {
+    const store = new MemoryCredentialStore();
+    store.credential = {
+      schemaVersion: 1,
+      accessToken: "ghu_expirado",
+      expiresAt: "2026-08-11T10:00:00.000Z",
+      refreshToken: "ghr_preservado",
+      refreshExpiresAt: "2027-01-01T00:00:00.000Z",
+    };
+    const original = store.credential;
+    const authenticator = new GitHubAuthenticator(silentIo().io, {
+      credentialStore: store,
+      fetcher: () => Promise.reject(new DOMException("abortado", "AbortError")),
+      now: () => new Date("2026-08-11T12:00:00.000Z"),
+      environment: {},
+    });
+
+    try {
+      await authenticator.resolveTokenSilently();
+      throw new Error("O refresh abortado deveria falhar.");
+    } catch (error) {
+      expect(error).toMatchObject({ exitCode: 4 });
+    }
+    expect(store.credential).toEqual(original);
+    expect(store.deletions).toBe(0);
+  });
+
   test("renova token do Device Flow sem client secret", async () => {
     const store = new MemoryCredentialStore();
     store.credential = {
